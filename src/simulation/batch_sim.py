@@ -7,8 +7,14 @@ and early stopping when all pendulums have flipped.
 GPU path: Uses torchdiffeq with the dopri5 adaptive solver on CUDA.
 Processes pendulums in chunks to limit VRAM usage. Flip detection is
 performed post-hoc on the full trajectory returned by the ODE solver.
+
+Memmap path: Wraps CPU or GPU simulation with memory-mapped output for
+large grids that do not fit in RAM. Supports resuming interrupted runs.
 """
 
+import json
+import time
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -16,6 +22,8 @@ from numpy.typing import NDArray
 
 from src.simulation.metrics import FlipTimeTracker
 from src.simulation.physics import derivatives
+from src.utils.grid import make_grid
+from src.utils.io import create_memmap_output
 
 try:
     import torch
@@ -359,3 +367,172 @@ def simulate_batch_gpu(
     }
 
     return simulation_results
+
+
+# ---------------------------------------------------------------------------
+# Memory-mapped batch processing  (Issue #13)
+# ---------------------------------------------------------------------------
+
+
+def simulate_batch_memmap(
+    grid_size: int,
+    theta_range: tuple[float, float] = (-170.0, 170.0),
+    dt: float = 0.01,
+    t_max: float = 15.0,
+    chunk_size: int = 5000,
+    output_path: str = "data/simulation",
+    use_gpu: bool = False,
+    gpu_device: str = "cuda",
+) -> str:
+    """Run a full-grid simulation writing results to a memory-mapped file.
+
+    This function orchestrates the complete pipeline: grid construction,
+    chunked simulation (CPU or GPU), and incremental persistence to a
+    NumPy memmap file.  A JSON metadata sidecar is written alongside the
+    array so the results are fully self-describing.
+
+    The function supports **resuming** interrupted runs.  On startup it
+    checks the existing memmap for chunks that already contain non-NaN
+    values and skips them automatically.
+
+    Args:
+        grid_size: Number of sample points per theta axis.  Total grid
+            points will be ``grid_size ** 3``.
+        theta_range: ``(theta_min, theta_max)`` in degrees.
+        dt: Integration timestep (CPU) or output spacing (GPU) in seconds.
+        t_max: Maximum simulation time in seconds.
+        chunk_size: Number of pendulums to simulate per batch.
+        output_path: Base path for output files (without extension).  Two
+            files are created: ``{output_path}.npy`` (memmap array) and
+            ``{output_path}_meta.json`` (metadata sidecar).
+        use_gpu: If ``True``, use :func:`simulate_batch_gpu`; otherwise
+            use :func:`simulate_batch` (CPU).
+        gpu_device: Torch device string, only used when *use_gpu* is True.
+
+    Returns:
+        The *output_path* string so callers know where results were saved.
+    """
+    total_pendulums = grid_size ** 3
+    grid_shape = (grid_size, grid_size, grid_size)
+    memmap_file_path = Path(f"{output_path}.npy")
+    metadata_file_path = Path(f"{output_path}_meta.json")
+
+    # ------------------------------------------------------------------
+    # 1. Build the full initial-condition grid
+    # ------------------------------------------------------------------
+    initial_conditions = make_grid(grid_size, theta_range[0], theta_range[1])
+
+    # ------------------------------------------------------------------
+    # 2. Create (or reopen) the memmap output file
+    # ------------------------------------------------------------------
+    if memmap_file_path.exists():
+        # Resume mode: reopen the existing file for read/write
+        flip_times_memmap: np.memmap = np.memmap(
+            str(memmap_file_path),
+            dtype=np.float64,
+            mode="r+",
+            shape=grid_shape,
+        )
+        print(f"Resuming: reopened existing memmap at {memmap_file_path}")
+    else:
+        flip_times_memmap = create_memmap_output(
+            str(memmap_file_path), grid_shape, dtype=np.float64
+        )
+        # Fill with NaN so un-simulated voxels are distinguishable
+        flip_times_memmap[:] = np.nan
+        flip_times_memmap.flush()
+        print(f"Created new memmap at {memmap_file_path}")
+
+    # ------------------------------------------------------------------
+    # 3. Process the grid in chunks
+    # ------------------------------------------------------------------
+    num_chunks = int(np.ceil(total_pendulums / chunk_size))
+    start_time = time.monotonic()
+
+    print(
+        f"Memmap batch: {total_pendulums} pendulums ({grid_size}^3), "
+        f"{num_chunks} chunks of up to {chunk_size}, "
+        f"backend={'GPU' if use_gpu else 'CPU'}"
+    )
+
+    for chunk_index in range(num_chunks):
+        chunk_start = chunk_index * chunk_size
+        chunk_end = min(chunk_start + chunk_size, total_pendulums)
+
+        # --- Resume check: skip chunks whose memmap values are all non-NaN ---
+        flat_view = flip_times_memmap.ravel()
+        chunk_slice = flat_view[chunk_start:chunk_end]
+        if not np.any(np.isnan(chunk_slice)):
+            already_flipped = int(np.sum(np.isfinite(chunk_slice)))
+            print(
+                f"  Chunk {chunk_index + 1}/{num_chunks}: "
+                f"already complete ({already_flipped} values present), skipping"
+            )
+            continue
+
+        # --- Simulate this chunk ---
+        chunk_thetas = initial_conditions[chunk_start:chunk_end]
+
+        if use_gpu:
+            chunk_results = simulate_batch_gpu(
+                chunk_thetas,
+                dt=dt,
+                t_max=t_max,
+                chunk_size=chunk_size,
+                device=gpu_device,
+            )
+        else:
+            chunk_results = simulate_batch(
+                chunk_thetas,
+                dt=dt,
+                t_max=t_max,
+            )
+
+        chunk_flip_times = chunk_results["flip_times"]
+
+        # --- Write results into the memmap at the correct flat indices ---
+        flat_view = flip_times_memmap.ravel()
+        flat_view[chunk_start:chunk_end] = chunk_flip_times
+        flip_times_memmap.flush()
+
+        # --- Progress reporting ---
+        cumulative_finite = int(np.sum(np.isfinite(flip_times_memmap)))
+        cumulative_fraction = cumulative_finite / total_pendulums
+        print(
+            f"  Chunk {chunk_index + 1}/{num_chunks} done — "
+            f"cumulative flipped: {cumulative_fraction:.1%}"
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Save metadata sidecar
+    # ------------------------------------------------------------------
+    elapsed_seconds = time.monotonic() - start_time
+    total_flipped = int(np.sum(np.isfinite(flip_times_memmap)))
+
+    metadata = {
+        "grid_size": grid_size,
+        "theta_range": list(theta_range),
+        "dt": dt,
+        "t_max": t_max,
+        "total_flipped": total_flipped,
+        "total_pendulums": total_pendulums,
+        "fraction_flipped": total_flipped / total_pendulums,
+        "computation_time_seconds": round(elapsed_seconds, 2),
+        "use_gpu": use_gpu,
+        "gpu_device": gpu_device if use_gpu else None,
+        "chunk_size": chunk_size,
+    }
+
+    metadata_file_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(metadata_file_path, "w", encoding="utf-8") as metadata_file:
+        json.dump(metadata, metadata_file, indent=2)
+
+    print(
+        f"Memmap batch complete: {total_flipped}/{total_pendulums} flipped "
+        f"({elapsed_seconds:.1f}s). Output: {output_path}"
+    )
+
+    # ------------------------------------------------------------------
+    # 5. Return the output path
+    # ------------------------------------------------------------------
+    return output_path
