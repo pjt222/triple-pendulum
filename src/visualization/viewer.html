@@ -411,14 +411,14 @@
       <div class="section-label">Dataset</div>
       <div class="control-row" style="margin-bottom:7px">
         <label>Backend</label>
-        <select id="backend-select" onchange="changeBackend()">
+        <select id="backend-select" style="flex:1" onchange="changeBackend()">
           <option value="cpu" selected>CPU</option>
           <option value="gpu">GPU</option>
         </select>
       </div>
       <div class="control-row">
         <label>Resolution</label>
-        <select id="resolution-select" onchange="changeResolution()">
+        <select id="resolution-select" style="flex:1" onchange="changeResolution()">
         </select>
       </div>
     </div>
@@ -428,8 +428,8 @@
     <!-- Colormap -->
     <div>
       <div class="section-label">Colormap</div>
-      <div class="control-row">
-        <select id="colormap-select" onchange="changeColormap()">
+      <div class="control-row" style="gap:4px">
+        <select id="colormap-select" style="flex:1" onchange="changeColormap()">
           <option value="cyberpunk" selected>Cyberpunk</option>
           <option value="magma">Magma</option>
           <option value="viridis">Viridis</option>
@@ -437,6 +437,7 @@
           <option value="plasma">Plasma</option>
           <option value="cividis">Cividis</option>
         </select>
+        <button class="octant-btn" id="invert-btn" style="flex:0 0 auto;padding:4px 8px" onclick="toggleInvertColormap()">Inv</button>
       </div>
       <div id="colormap-legend">
         <canvas id="legend-canvas" width="236" height="12"></canvas>
@@ -455,14 +456,14 @@
 
       <div class="control-row" style="margin-bottom:7px">
         <label>Point size</label>
-        <input type="range" id="point-size" min="1" max="10" step="0.5" value="3" oninput="updatePointSize()" />
-        <span class="value-label" id="point-size-val">3</span>
+        <input type="range" id="point-size" min="1" max="10" step="0.5" value="2" oninput="updatePointSize()" />
+        <span class="value-label" id="point-size-val">2</span>
       </div>
 
       <div class="control-row">
         <label>Opacity</label>
-        <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.7" oninput="updateOpacity()" />
-        <span class="value-label" id="opacity-val">0.70</span>
+        <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.05" oninput="updateOpacity()" />
+        <span class="value-label" id="opacity-val">0.05</span>
       </div>
     </div>
 
@@ -605,6 +606,7 @@ const state = {
   tMax: 0,
   pointCount: 0,
   currentColormap: 'cyberpunk',
+  invertColormap: false,
   // Three.js objects
   scene: null,
   camera: null,
@@ -685,6 +687,7 @@ const COLORMAPS = {
 
 function sampleColormap(t, mapName) {
   t = Math.max(0, Math.min(1, t));
+  if (state.invertColormap) t = 1 - t;
   const stops = COLORMAPS[mapName] || COLORMAPS.cyberpunk;
   let lo = stops[0], hi = stops[stops.length - 1];
   for (let i = 1; i < stops.length; i++) {
@@ -933,12 +936,12 @@ function buildPointCloud(data) {
   geometry.setAttribute('color', new THREE.BufferAttribute(displayColors, 3));
 
   const material = new THREE.PointsMaterial({
-    size: 0.04,
+    size: 0.026,
     vertexColors: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     transparent: true,
-    opacity: 0.7,
+    opacity: 0.05,
     sizeAttenuation: true,
   });
 
@@ -1098,6 +1101,18 @@ function changeColormap() {
   drawLegend();
 }
 
+function toggleInvertColormap() {
+  state.invertColormap = !state.invertColormap;
+  const btn = document.getElementById('invert-btn');
+  btn.style.borderColor = state.invertColormap ? 'var(--text-accent)' : '';
+  btn.style.color = state.invertColormap ? 'var(--text-accent)' : '';
+  if (state.pointCount > 0) {
+    computeColors();
+    applyFilters();
+  }
+  drawLegend();
+}
+
 // ─── Control handlers ─────────────────────────────────────────────────────────
 
 function updatePointSize() {
@@ -1176,6 +1191,7 @@ window.togglePanel = togglePanel;
 window.showAllOctants = showAllOctants;
 window.hideAllOctants = hideAllOctants;
 window.changeColormap = changeColormap;
+window.toggleInvertColormap = toggleInvertColormap;
 window.changeBackend = changeBackend;
 window.changeResolution = changeResolution;
 
