@@ -406,6 +406,25 @@
 
     <hr class="divider" />
 
+    <!-- Dataset -->
+    <div>
+      <div class="section-label">Dataset</div>
+      <div class="control-row" style="margin-bottom:7px">
+        <label>Backend</label>
+        <select id="backend-select" onchange="changeBackend()">
+          <option value="cpu" selected>CPU</option>
+          <option value="gpu">GPU</option>
+        </select>
+      </div>
+      <div class="control-row">
+        <label>Resolution</label>
+        <select id="resolution-select" onchange="changeResolution()">
+        </select>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
     <!-- Colormap -->
     <div>
       <div class="section-label">Colormap</div>
@@ -700,8 +719,44 @@ function drawLegend() {
 
 // ─── Data loading ─────────────────────────────────────────────────────────────
 
+// Dataset manifest: backend -> [{resolution, file, label}]
+const DATASETS = {
+  cpu: [
+    { resolution: 80, file: 'simulation_80_cpu.json', label: '80\u00B3 (512K pts)' },
+    { resolution: 40, file: 'simulation_40_cpu.json', label: '40\u00B3 (64K pts)' },
+  ],
+  gpu: [
+    { resolution: 40, file: 'simulation_40_gpu.json', label: '40\u00B3 (64K pts)' },
+  ],
+};
+
+function populateResolutionSelect(backend) {
+  const select = document.getElementById('resolution-select');
+  const entries = DATASETS[backend] || [];
+  select.innerHTML = '';
+  for (const entry of entries) {
+    const option = document.createElement('option');
+    option.value = entry.resolution;
+    option.textContent = entry.label;
+    select.appendChild(option);
+  }
+}
+
+function getSelectedFile() {
+  const backend = document.getElementById('backend-select').value;
+  const resolution = parseInt(document.getElementById('resolution-select').value);
+  const entries = DATASETS[backend] || [];
+  const match = entries.find(e => e.resolution === resolution);
+  return match ? match.file : entries[0]?.file;
+}
+
 async function loadData() {
-  const dataPath = 'simulation_result.json';
+  const dataPath = getSelectedFile();
+  if (!dataPath) {
+    console.warn('No dataset file available, using demo mode');
+    document.getElementById('demo-badge').style.display = 'block';
+    return generateDemoData(20);
+  }
   try {
     const res = await fetch(dataPath);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -998,6 +1053,39 @@ function updateStats(showing, total, totalFlipped) {
     `<span>${pct}%</span> flipped`;
 }
 
+// ─── Dataset switching ───────────────────────────────────────────────────────
+
+async function reloadDataset() {
+  const backend = document.getElementById('backend-select').value;
+  const resolution = document.getElementById('resolution-select').value;
+
+  const loading = document.getElementById('loading');
+  loading.style.display = 'flex';
+  loading.classList.remove('hidden');
+  document.getElementById('loading-text').textContent = `Loading ${backend.toUpperCase()} ${resolution}\u00B3 data...`;
+  document.getElementById('demo-badge').style.display = 'none';
+
+  await new Promise(r => setTimeout(r, 50));
+
+  const data = await loadData();
+  buildPointCloud(data);
+  initSliders();
+  applyFilters();
+
+  loading.classList.add('hidden');
+  setTimeout(() => { loading.style.display = 'none'; }, 500);
+}
+
+function changeBackend() {
+  const backend = document.getElementById('backend-select').value;
+  populateResolutionSelect(backend);
+  reloadDataset();
+}
+
+function changeResolution() {
+  reloadDataset();
+}
+
 // ─── Colormap switching ──────────────────────────────────────────────────────
 
 function changeColormap() {
@@ -1088,6 +1176,8 @@ window.togglePanel = togglePanel;
 window.showAllOctants = showAllOctants;
 window.hideAllOctants = hideAllOctants;
 window.changeColormap = changeColormap;
+window.changeBackend = changeBackend;
+window.changeResolution = changeResolution;
 
 // ─── Render loop ──────────────────────────────────────────────────────────────
 
@@ -1112,6 +1202,8 @@ async function main() {
   animate();
   drawLegend();
 
+  // Populate resolution dropdown for initial backend
+  populateResolutionSelect(document.getElementById('backend-select').value);
   const data = await loadData();
   buildPointCloud(data);
   initSliders();
