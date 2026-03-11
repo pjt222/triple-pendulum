@@ -397,6 +397,53 @@
       <input type="range" id="slice-z" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('z')" />
     </div>
 
+    <hr class="divider" />
+
+    <!-- Octant controls -->
+    <div>
+      <div class="section-label">Octant controls</div>
+
+      <div class="control-row" style="margin-bottom:8px;gap:4px">
+        <button onclick="showAllOctants()" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);border-radius:4px;color:#ccc;font-size:11px;padding:4px 0;cursor:pointer;">Show All</button>
+        <button onclick="hideAllOctants()" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);border-radius:4px;color:#ccc;font-size:11px;padding:4px 0;cursor:pointer;">Hide All</button>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 8px">
+        <div class="control-row">
+          <input type="checkbox" id="octant-1" checked onchange="applyFilters()" />
+          <label style="color:#ccc;font-size:11px">1 +++</label>
+        </div>
+        <div class="control-row">
+          <input type="checkbox" id="octant-2" checked onchange="applyFilters()" />
+          <label style="color:#ccc;font-size:11px">2 ++-</label>
+        </div>
+        <div class="control-row">
+          <input type="checkbox" id="octant-3" checked onchange="applyFilters()" />
+          <label style="color:#ccc;font-size:11px">3 +-+</label>
+        </div>
+        <div class="control-row">
+          <input type="checkbox" id="octant-4" checked onchange="applyFilters()" />
+          <label style="color:#ccc;font-size:11px">4 +--</label>
+        </div>
+        <div class="control-row">
+          <input type="checkbox" id="octant-5" checked onchange="applyFilters()" />
+          <label style="color:#ccc;font-size:11px">5 -++</label>
+        </div>
+        <div class="control-row">
+          <input type="checkbox" id="octant-6" checked onchange="applyFilters()" />
+          <label style="color:#ccc;font-size:11px">6 -+-</label>
+        </div>
+        <div class="control-row">
+          <input type="checkbox" id="octant-7" checked onchange="applyFilters()" />
+          <label style="color:#ccc;font-size:11px">7 --+</label>
+        </div>
+        <div class="control-row">
+          <input type="checkbox" id="octant-8" checked onchange="applyFilters()" />
+          <label style="color:#ccc;font-size:11px">8 ---</label>
+        </div>
+      </div>
+    </div>
+
   </div><!-- end controls-body -->
 </div><!-- end controls -->
 
@@ -666,6 +713,12 @@ function applyFilters() {
   const yVal = parseFloat(document.getElementById('slice-y').value);
   const zVal = parseFloat(document.getElementById('slice-z').value);
 
+  // Octant visibility: index 0 = octant 1, ..., index 7 = octant 8
+  const octantVisible = new Array(8);
+  for (let octantIdx = 0; octantIdx < 8; octantIdx++) {
+    octantVisible[octantIdx] = document.getElementById('octant-' + (octantIdx + 1)).checked;
+  }
+
   const colorAttr = state.geometry.getAttribute('color');
   const displayColors = colorAttr.array;
   const rawColors = state.rawColors;
@@ -696,6 +749,18 @@ function applyFilters() {
     if (xEn && Math.abs(t1 - xVal) > sliceThickness) visible = false;
     if (visible && yEn && Math.abs(t2 - yVal) > sliceThickness) visible = false;
     if (visible && zEn && Math.abs(t3 - zVal) > sliceThickness) visible = false;
+
+    // Octant filtering
+    // nx, ny, nz are normalized to [-1, 1]; compute octant index from sign
+    if (visible) {
+      const nx = state.positions[idx * 3 + 0];
+      const ny = state.positions[idx * 3 + 1];
+      const nz = state.positions[idx * 3 + 2];
+      // Octant 1-8: (x+,y+,z+), (x+,y+,z-), (x+,y-,z+), (x+,y-,z-),
+      //             (x-,y+,z+), (x-,y+,z-), (x-,y-,z+), (x-,y-,z-)
+      const octantIndex = (nx >= 0 ? 0 : 4) + (ny >= 0 ? 0 : 2) + (nz >= 0 ? 0 : 1);
+      if (!octantVisible[octantIndex]) visible = false;
+    }
 
     if (visible) {
       if (stable) {
@@ -784,6 +849,20 @@ function togglePanel() {
   document.getElementById('controls').classList.toggle('collapsed');
 }
 
+function showAllOctants() {
+  for (let octantIdx = 1; octantIdx <= 8; octantIdx++) {
+    document.getElementById('octant-' + octantIdx).checked = true;
+  }
+  applyFilters();
+}
+
+function hideAllOctants() {
+  for (let octantIdx = 1; octantIdx <= 8; octantIdx++) {
+    document.getElementById('octant-' + octantIdx).checked = false;
+  }
+  applyFilters();
+}
+
 // Expose to inline handlers
 window.updatePointSize = updatePointSize;
 window.updateOpacity = updateOpacity;
@@ -792,6 +871,8 @@ window.updateSliceThickness = updateSliceThickness;
 window.updateSliceLabel = updateSliceLabel;
 window.applyFilters = applyFilters;
 window.togglePanel = togglePanel;
+window.showAllOctants = showAllOctants;
+window.hideAllOctants = hideAllOctants;
 
 // ─── Render loop ──────────────────────────────────────────────────────────────
 
