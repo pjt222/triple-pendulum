@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "triple-pendulum"
+version = "0.1.0"
+description = "3D voxel visualization of triple pendulum chaos"
+readme = "README.md"
+license = "CC-BY-NC-SA-4.0"
+requires-python = ">=3.10"
+authors = [
+    {name = "Philipp Thoss", email = "ph.thoss@gmx.de"},
+]
+
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "torch>=2.0",
+    "torchdiffeq>=0.2",
+]
+viz = [
+    "vispy>=0.14",
+    "matplotlib>=3.7",
+    "scikit-image>=0.21",
+]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+]
+all = [
+    "triple-pendulum[gpu,viz,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/pjt222/triple-pendulum"
+Issues = "https://github.com/pjt222/triple-pendulum/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
