@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Triple Pendulum 3D Chaos Viewer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: #000;
+      color: #fff;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    #canvas-container {
+      position: absolute;
+      inset: 0;
+    }
+
+    canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    /* Controls Panel */
+    #controls {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      width: 260px;
+      max-height: calc(100vh - 24px);
+      background: rgba(0, 0, 0, 0.82);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      font-size: 12px;
+      backdrop-filter: blur(4px);
+    }
+
+    #controls-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, 0.06);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      cursor: pointer;
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    #controls-header:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    #controls-title {
+      font-weight: 600;
+      font-size: 13px;
+      letter-spacing: 0.02em;
+      color: #e0e0e0;
+    }
+
+    #collapse-icon {
+      font-size: 10px;
+      color: #aaa;
+      transition: transform 0.2s;
+    }
+
+    #controls.collapsed #collapse-icon {
+      transform: rotate(-90deg);
+    }
+
+    #controls-body {
+      overflow-y: auto;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    #controls.collapsed #controls-body {
+      display: none;
+    }
+
+    /* Scrollbar */
+    #controls-body::-webkit-scrollbar {
+      width: 4px;
+    }
+    #controls-body::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    #controls-body::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.2);
+      border-radius: 2px;
+    }
+
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      margin-bottom: 6px;
+    }
+
+    .control-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .control-row label {
+      color: #ccc;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .control-row .value-label {
+      color: #aaa;
+      min-width: 40px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    input[type="range"] {
+      flex: 1;
+      height: 3px;
+      appearance: none;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #e85c30;
+      cursor: pointer;
+      box-shadow: 0 0 4px rgba(232, 92, 48, 0.6);
+    }
+
+    input[type="range"]::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #e85c30;
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 0 4px rgba(232, 92, 48, 0.6);
+    }
+
+    input[type="checkbox"] {
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 3px;
+      background: transparent;
+      cursor: pointer;
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    input[type="checkbox"]:checked {
+      background: #e85c30;
+      border-color: #e85c30;
+    }
+
+    input[type="checkbox"]:checked::after {
+      content: '';
+      position: absolute;
+      left: 3px;
+      top: 1px;
+      width: 5px;
+      height: 8px;
+      border: 2px solid #fff;
+      border-top: none;
+      border-left: none;
+      transform: rotate(45deg);
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Slice axis block */
+    .slice-axis {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .slice-axis-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .slice-axis-header label {
+      color: #ccc;
+      flex: 1;
+    }
+
+    .slice-axis-header .value-label {
+      color: #aaa;
+      min-width: 44px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .slice-axis input[type="range"] {
+      margin-left: 20px;
+    }
+
+    /* Stats */
+    #stats {
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 4px;
+      padding: 7px 10px;
+      line-height: 1.6;
+      color: #bbb;
+    }
+
+    #stats span {
+      color: #e0a060;
+      font-weight: 600;
+    }
+
+    /* Loading overlay */
+    #loading {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      z-index: 100;
+      gap: 16px;
+      transition: opacity 0.4s;
+    }
+
+    #loading.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(232, 92, 48, 0.2);
+      border-top-color: #e85c30;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    #loading-text {
+      color: #888;
+      font-size: 13px;
+    }
+
+    /* Info badge (demo mode) */
+    #demo-badge {
+      position: absolute;
+      bottom: 12px;
+      right: 12px;
+      background: rgba(232, 92, 48, 0.15);
+      border: 1px solid rgba(232, 92, 48, 0.4);
+      border-radius: 4px;
+      padding: 5px 10px;
+      font-size: 11px;
+      color: #e85c30;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div id="loading-text">Loading simulation data...</div>
+</div>
+
+<div id="controls">
+  <div id="controls-header" onclick="togglePanel()">
+    <span id="controls-title">Triple Pendulum Controls</span>
+    <span id="collapse-icon">&#9660;</span>
+  </div>
+  <div id="controls-body">
+
+    <!-- Stats -->
+    <div id="stats">Loading...</div>
+
+    <hr class="divider" />
+
+    <!-- Point appearance -->
+    <div>
+      <div class="section-label">Appearance</div>
+
+      <div class="control-row" style="margin-bottom:7px">
+        <label>Point size</label>
+        <input type="range" id="point-size" min="1" max="10" step="0.5" value="3" oninput="updatePointSize()" />
+        <span class="value-label" id="point-size-val">3</span>
+      </div>
+
+      <div class="control-row">
+        <label>Opacity</label>
+        <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.7" oninput="updateOpacity()" />
+        <span class="value-label" id="opacity-val">0.70</span>
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Time filter -->
+    <div>
+      <div class="section-label">Flip time filter</div>
+
+      <div class="control-row" style="margin-bottom:7px">
+        <label>Min</label>
+        <input type="range" id="time-min" min="0" max="1" step="0.01" value="0" oninput="updateTimeFilter()" />
+        <span class="value-label" id="time-min-val">0.0 s</span>
+      </div>
+
+      <div class="control-row">
+        <label>Max</label>
+        <input type="range" id="time-max" min="0" max="1" step="0.01" value="1" oninput="updateTimeFilter()" />
+        <span class="value-label" id="time-max-val">-- s</span>
+      </div>
+
+      <div class="control-row" style="margin-top:7px">
+        <label>Show stable</label>
+        <input type="checkbox" id="show-stable" checked onchange="applyFilters()" />
+      </div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Slice controls -->
+    <div>
+      <div class="section-label">Slice controls</div>
+
+      <div class="control-row" style="margin-bottom:4px">
+        <label>Thickness</label>
+        <input type="range" id="slice-thickness" min="1" max="20" step="1" value="5" oninput="updateSliceThickness()" />
+        <span class="value-label" id="slice-thickness-val">5°</span>
+      </div>
+    </div>
+
+    <!-- Axis slices -->
+    <div class="slice-axis">
+      <div class="slice-axis-header">
+        <input type="checkbox" id="slice-x-en" onchange="applyFilters()" />
+        <label>&#952;&#8321; slice</label>
+        <span class="value-label" id="slice-x-val">0°</span>
+      </div>
+      <input type="range" id="slice-x" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('x')" />
+    </div>
+
+    <div class="slice-axis">
+      <div class="slice-axis-header">
+        <input type="checkbox" id="slice-y-en" onchange="applyFilters()" />
+        <label>&#952;&#8322; slice</label>
+        <span class="value-label" id="slice-y-val">0°</span>
+      </div>
+      <input type="range" id="slice-y" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('y')" />
+    </div>
+
+    <div class="slice-axis">
+      <div class="slice-axis-header">
+        <input type="checkbox" id="slice-z-en" onchange="applyFilters()" />
+        <label>&#952;&#8323; slice</label>
+        <span class="value-label" id="slice-z-val">0°</span>
+      </div>
+      <input type="range" id="slice-z" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('z')" />
+    </div>
+
+  </div><!-- end controls-body -->
+</div><!-- end controls -->
+
+<div id="demo-badge">DEMO MODE — random data</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
+const state = {
+  gridSize: 0,
+  thetaRange: [-170, 170],
+  flipTimes: null,       // Float32Array, length N^3, NaN = never flipped
+  tMax: 0,
+  pointCount: 0,
+  // Three.js objects
+  scene: null,
+  camera: null,
+  renderer: null,
+  controls: null,
+  points: null,
+  geometry: null,
+  // Per-point cache (computed once from raw data)
+  positions: null,       // Float32Array N^3 * 3
+  rawColors: null,       // Float32Array N^3 * 3 (base colormap, no opacity baking)
+  isStable: null,        // Uint8Array N^3, 1 = never flipped
+  // Visible flags computed by filter pass
+  visibleFlags: null,    // Uint8Array N^3
+};
+
+// ─── Colormap ─────────────────────────────────────────────────────────────────
+// Magma-inspired: black -> dark purple -> red -> orange -> yellow -> white
+
+const MAGMA_STOPS = [
+  [0.000, [0.001, 0.000, 0.014]],
+  [0.130, [0.172, 0.005, 0.200]],
+  [0.280, [0.460, 0.040, 0.310]],
+  [0.450, [0.750, 0.100, 0.140]],
+  [0.620, [0.950, 0.380, 0.060]],
+  [0.780, [0.990, 0.660, 0.200]],
+  [0.900, [1.000, 0.880, 0.500]],
+  [1.000, [1.000, 1.000, 1.000]],
+];
+
+function magma(t) {
+  t = Math.max(0, Math.min(1, t));
+  let lo = MAGMA_STOPS[0], hi = MAGMA_STOPS[MAGMA_STOPS.length - 1];
+  for (let i = 1; i < MAGMA_STOPS.length; i++) {
+    if (t <= MAGMA_STOPS[i][0]) {
+      hi = MAGMA_STOPS[i];
+      lo = MAGMA_STOPS[i - 1];
+      break;
+    }
+  }
+  const span = hi[0] - lo[0];
+  const f = span > 0 ? (t - lo[0]) / span : 0;
+  return [
+    lo[1][0] + f * (hi[1][0] - lo[1][0]),
+    lo[1][1] + f * (hi[1][1] - lo[1][1]),
+    lo[1][2] + f * (hi[1][2] - lo[1][2]),
+  ];
+}
+
+// ─── Data loading ─────────────────────────────────────────────────────────────
+
+async function loadData() {
+  const dataPath = '../../data/simulation_result.json';
+  try {
+    const res = await fetch(dataPath);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    return parseSimData(json);
+  } catch (err) {
+    console.warn('Could not load simulation data, using demo mode:', err.message);
+    document.getElementById('demo-badge').style.display = 'block';
+    document.getElementById('loading-text').textContent = 'Generating demo data...';
+    return generateDemoData(20);
+  }
+}
+
+function parseSimData(json) {
+  const gridSize = json.grid_size;
+  const thetaRange = json.theta_range || [-170, 170];
+  const raw = json.flip_times;
+  const n3 = gridSize ** 3;
+  const flipTimes = new Float32Array(n3);
+  let tMax = 0;
+  for (let i = 0; i < n3; i++) {
+    const v = raw[i];
+    flipTimes[i] = (v === null || v === undefined || !isFinite(v)) ? NaN : v;
+    if (isFinite(flipTimes[i]) && flipTimes[i] > tMax) tMax = flipTimes[i];
+  }
+  return { gridSize, thetaRange, flipTimes, tMax };
+}
+
+function generateDemoData(gridSize) {
+  const n3 = gridSize ** 3;
+  const flipTimes = new Float32Array(n3);
+  const tMax = 15;
+  for (let i = 0; i < n3; i++) {
+    flipTimes[i] = Math.random() < 0.20 ? NaN : Math.random() * tMax;
+  }
+  return { gridSize, thetaRange: [-170, 170], flipTimes, tMax };
+}
+
+// ─── Three.js setup ───────────────────────────────────────────────────────────
+
+function initThree() {
+  const container = document.getElementById('canvas-container');
+
+  state.scene = new THREE.Scene();
+  state.scene.background = new THREE.Color(0x000000);
+
+  state.camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.001, 100);
+  state.camera.position.set(2.2, 1.6, 2.2);
+
+  state.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+  state.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  state.renderer.setSize(container.clientWidth, container.clientHeight);
+  container.appendChild(state.renderer.domElement);
+
+  state.controls = new OrbitControls(state.camera, state.renderer.domElement);
+  state.controls.enableDamping = true;
+  state.controls.dampingFactor = 0.08;
+  state.controls.minDistance = 0.5;
+  state.controls.maxDistance = 10;
+
+  // Subtle axis helper
+  const axesHelper = new THREE.AxesHelper(1.2);
+  axesHelper.material.opacity = 0.25;
+  axesHelper.material.transparent = true;
+  state.scene.add(axesHelper);
+
+  window.addEventListener('resize', onResize);
+}
+
+function onResize() {
+  const container = document.getElementById('canvas-container');
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  state.camera.aspect = w / h;
+  state.camera.updateProjectionMatrix();
+  state.renderer.setSize(w, h);
+}
+
+// ─── Point cloud construction ─────────────────────────────────────────────────
+
+function buildPointCloud(data) {
+  const { gridSize, thetaRange, flipTimes, tMax } = data;
+  Object.assign(state, { gridSize, thetaRange, flipTimes, tMax });
+
+  const n3 = gridSize ** 3;
+  const positions = new Float32Array(n3 * 3);
+  const colors    = new Float32Array(n3 * 3);
+  const isStable  = new Uint8Array(n3);
+
+  const thetaMin = thetaRange[0];
+  const thetaSpan = thetaRange[1] - thetaRange[0];
+
+  // Stable color: very dim dark purple
+  const stableColor = magma(0.04);
+
+  for (let idx = 0; idx < n3; idx++) {
+    // Unpack flat index to (iz, iy, ix)
+    const ix = idx % gridSize;
+    const iy = Math.floor(idx / gridSize) % gridSize;
+    const iz = Math.floor(idx / (gridSize * gridSize));
+
+    // Map grid indices to theta values
+    const t1 = thetaMin + (ix / (gridSize - 1)) * thetaSpan;
+    const t2 = thetaMin + (iy / (gridSize - 1)) * thetaSpan;
+    const t3 = thetaMin + (iz / (gridSize - 1)) * thetaSpan;
+
+    // Normalize to [-1, 1]
+    const nx = (ix / (gridSize - 1)) * 2 - 1;
+    const ny = (iy / (gridSize - 1)) * 2 - 1;
+    const nz = (iz / (gridSize - 1)) * 2 - 1;
+
+    positions[idx * 3 + 0] = nx;
+    positions[idx * 3 + 1] = ny;
+    positions[idx * 3 + 2] = nz;
+
+    const ft = flipTimes[idx];
+    const stable = !isFinite(ft);
+    isStable[idx] = stable ? 1 : 0;
+
+    let rgb;
+    if (stable) {
+      rgb = stableColor;
+    } else {
+      const normalizedT = tMax > 0 ? ft / tMax : 0;
+      rgb = magma(normalizedT);
+    }
+
+    colors[idx * 3 + 0] = rgb[0];
+    colors[idx * 3 + 1] = rgb[1];
+    colors[idx * 3 + 2] = rgb[2];
+  }
+
+  state.positions = positions;
+  state.rawColors = colors;
+  state.isStable  = isStable;
+  state.visibleFlags = new Uint8Array(n3);
+  state.pointCount = n3;
+
+  // Build geometry with all points; visibility handled via color alpha trick
+  // We use a secondary color buffer that we zero out for hidden points
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+  const displayColors = new Float32Array(colors);
+  geometry.setAttribute('color', new THREE.BufferAttribute(displayColors, 3));
+
+  const material = new THREE.PointsMaterial({
+    size: 0.04,
+    vertexColors: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    transparent: true,
+    opacity: 0.7,
+    sizeAttenuation: true,
+  });
+
+  if (state.points) {
+    state.scene.remove(state.points);
+    state.geometry.dispose();
+  }
+
+  state.geometry = geometry;
+  state.points = new THREE.Points(geometry, material);
+  state.scene.add(state.points);
+
+  return geometry;
+}
+
+// ─── Filter & visibility ──────────────────────────────────────────────────────
+
+function applyFilters() {
+  if (!state.points) return;
+
+  const n3 = state.pointCount;
+  const gridSize = state.gridSize;
+  const thetaRange = state.thetaRange;
+  const thetaMin = thetaRange[0];
+  const thetaSpan = thetaRange[1] - thetaRange[0];
+
+  const timeMin = parseFloat(document.getElementById('time-min').value) * state.tMax;
+  const timeMax = parseFloat(document.getElementById('time-max').value) * state.tMax;
+  const showStable = document.getElementById('show-stable').checked;
+  const sliceThickness = parseFloat(document.getElementById('slice-thickness').value);
+
+  const xEn  = document.getElementById('slice-x-en').checked;
+  const yEn  = document.getElementById('slice-y-en').checked;
+  const zEn  = document.getElementById('slice-z-en').checked;
+  const xVal = parseFloat(document.getElementById('slice-x').value);
+  const yVal = parseFloat(document.getElementById('slice-y').value);
+  const zVal = parseFloat(document.getElementById('slice-z').value);
+
+  const colorAttr = state.geometry.getAttribute('color');
+  const displayColors = colorAttr.array;
+  const rawColors = state.rawColors;
+  const flipTimes = state.flipTimes;
+  const isStable  = state.isStable;
+
+  let showing = 0;
+  let totalFlipped = 0;
+
+  for (let idx = 0; idx < n3; idx++) {
+    const ix = idx % gridSize;
+    const iy = Math.floor(idx / gridSize) % gridSize;
+    const iz = Math.floor(idx / (gridSize * gridSize));
+
+    const t1 = thetaMin + (ix / (gridSize - 1)) * thetaSpan;
+    const t2 = thetaMin + (iy / (gridSize - 1)) * thetaSpan;
+    const t3 = thetaMin + (iz / (gridSize - 1)) * thetaSpan;
+
+    const stable = isStable[idx] === 1;
+    const ft = flipTimes[idx];
+
+    if (!stable) totalFlipped++;
+
+    // Determine visibility
+    let visible = true;
+
+    // Slice filtering
+    if (xEn && Math.abs(t1 - xVal) > sliceThickness) visible = false;
+    if (visible && yEn && Math.abs(t2 - yVal) > sliceThickness) visible = false;
+    if (visible && zEn && Math.abs(t3 - zVal) > sliceThickness) visible = false;
+
+    if (visible) {
+      if (stable) {
+        visible = showStable;
+      } else {
+        // Time range filter
+        if (ft < timeMin || ft > timeMax) visible = false;
+      }
+    }
+
+    if (visible) {
+      showing++;
+      displayColors[idx * 3 + 0] = rawColors[idx * 3 + 0];
+      displayColors[idx * 3 + 1] = rawColors[idx * 3 + 1];
+      displayColors[idx * 3 + 2] = rawColors[idx * 3 + 2];
+    } else {
+      displayColors[idx * 3 + 0] = 0;
+      displayColors[idx * 3 + 1] = 0;
+      displayColors[idx * 3 + 2] = 0;
+    }
+  }
+
+  colorAttr.needsUpdate = true;
+  updateStats(showing, n3, totalFlipped);
+}
+
+function updateStats(showing, total, totalFlipped) {
+  const pct = total > 0 ? ((totalFlipped / total) * 100).toFixed(1) : '0.0';
+  document.getElementById('stats').innerHTML =
+    `Showing <span>${showing.toLocaleString()}</span> / ${total.toLocaleString()} points<br>` +
+    `<span>${pct}%</span> flipped`;
+}
+
+// ─── Control handlers ─────────────────────────────────────────────────────────
+
+function updatePointSize() {
+  const val = parseFloat(document.getElementById('point-size').value);
+  document.getElementById('point-size-val').textContent = val;
+  if (state.points) {
+    // Convert slider units to world-space size (scene spans [-1,1])
+    state.points.material.size = val * 0.013;
+    state.points.material.needsUpdate = true;
+  }
+}
+
+function updateOpacity() {
+  const val = parseFloat(document.getElementById('opacity').value);
+  document.getElementById('opacity-val').textContent = val.toFixed(2);
+  if (state.points) {
+    state.points.material.opacity = val;
+    state.points.material.needsUpdate = true;
+  }
+}
+
+function updateTimeFilter() {
+  let minVal = parseFloat(document.getElementById('time-min').value);
+  let maxVal = parseFloat(document.getElementById('time-max').value);
+
+  // Clamp min <= max
+  if (minVal > maxVal) {
+    minVal = maxVal;
+    document.getElementById('time-min').value = minVal;
+  }
+
+  const minSec = (minVal * state.tMax).toFixed(1);
+  const maxSec = maxVal >= 1.0 ? (state.tMax > 0 ? state.tMax.toFixed(1) : '--') : (maxVal * state.tMax).toFixed(1);
+  document.getElementById('time-min-val').textContent = minSec + ' s';
+  document.getElementById('time-max-val').textContent = maxSec + ' s';
+
+  applyFilters();
+}
+
+function updateSliceThickness() {
+  const val = parseInt(document.getElementById('slice-thickness').value);
+  document.getElementById('slice-thickness-val').textContent = val + '°';
+  applyFilters();
+}
+
+function updateSliceLabel(axis) {
+  const val = parseInt(document.getElementById('slice-' + axis).value);
+  document.getElementById('slice-' + axis + '-val').textContent = val + '°';
+  applyFilters();
+}
+
+function togglePanel() {
+  document.getElementById('controls').classList.toggle('collapsed');
+}
+
+// Expose to inline handlers
+window.updatePointSize = updatePointSize;
+window.updateOpacity = updateOpacity;
+window.updateTimeFilter = updateTimeFilter;
+window.updateSliceThickness = updateSliceThickness;
+window.updateSliceLabel = updateSliceLabel;
+window.applyFilters = applyFilters;
+window.togglePanel = togglePanel;
+
+// ─── Render loop ──────────────────────────────────────────────────────────────
+
+function animate() {
+  requestAnimationFrame(animate);
+  state.controls.update();
+  state.renderer.render(state.scene, state.camera);
+}
+
+// ─── Initialise time-range sliders from real data ────────────────────────────
+
+function initSliders() {
+  const tMax = state.tMax;
+  document.getElementById('time-max-val').textContent = (tMax > 0 ? tMax.toFixed(1) : '--') + ' s';
+  document.getElementById('time-min-val').textContent = '0.0 s';
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+async function main() {
+  initThree();
+  animate();
+
+  const data = await loadData();
+  buildPointCloud(data);
+  initSliders();
+  applyFilters();
+
+  // Hide loading screen
+  const loading = document.getElementById('loading');
+  loading.classList.add('hidden');
+  setTimeout(() => { loading.style.display = 'none'; }, 500);
+}
+
+main();
+</script>
+</body>
+</html>
