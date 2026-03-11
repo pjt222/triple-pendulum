@@ -60,7 +60,7 @@ def simulate_batch(
     (early stopping).
 
     Args:
-        initial_thetas: Initial angles of shape (N, 3) in radians.
+        initial_thetas: Initial angles of shape (N, 3) in degrees.
         dt: Integration timestep in seconds.
         t_max: Maximum simulation time in seconds.
         flip_callback: Optional callback invoked each step with signature
@@ -81,9 +81,9 @@ def simulate_batch(
     # Build the flip tracker (used internally and optionally via callback)
     flip_tracker = FlipTimeTracker(num_pendulums)
 
-    # Initialize state: [theta1, theta2, theta3, 0, 0, 0]
+    # Convert degrees to radians and initialize state: [theta1, theta2, theta3, 0, 0, 0]
     state = np.zeros((num_pendulums, 6), dtype=np.float64)
-    state[:, :3] = initial_thetas
+    state[:, :3] = np.radians(initial_thetas)
 
     print(f"Simulating {num_pendulums} pendulums for {t_max}s (dt={dt}, steps={num_steps})")
 

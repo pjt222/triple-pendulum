@@ -124,8 +124,8 @@ def derivatives(state: NDArray[np.float64]) -> NDArray[np.float64]:
 
     # Solve M * alpha = -f for angular accelerations
     # np.linalg.solve broadcasts over the batch dimension
-    negative_force = -force_vectors  # (N, 3)
-    angular_accelerations = np.linalg.solve(mass_matrices, negative_force)  # (N, 3)
+    negative_force = -force_vectors[..., np.newaxis]  # (N, 3, 1)
+    angular_accelerations = np.linalg.solve(mass_matrices, negative_force).squeeze(-1)  # (N, 3)
 
     # Assemble derivative vector: [omega, alpha]
     state_derivatives = np.empty_like(state)  # (N, 6)

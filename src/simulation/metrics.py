@@ -14,11 +14,15 @@ def detect_flips(
     theta_prev: NDArray[np.float64],
     theta_curr: NDArray[np.float64],
 ) -> NDArray[np.bool_]:
-    """Detect angle wrapping (flips) between two consecutive timesteps.
+    """Detect when a pendulum bob goes over the top (+/-180 degrees).
 
-    A flip is detected when the absolute change in angle exceeds pi,
-    which indicates the angle has wrapped past the +/-180 degree boundary.
-    This is a standard unwrapping discontinuity check.
+    Angles accumulate freely (are not wrapped) during integration.
+    A flip occurs when the angle crosses a multiple of pi — i.e., when
+    the wrapped-to-[-pi,pi] versions of theta_prev and theta_curr have
+    opposite signs AND the raw angle moved enough to actually cross.
+
+    In practice, the simplest correct check: wrap both angles to [-pi, pi]
+    and detect a sign change with large magnitude (the wrap discontinuity).
 
     Args:
         theta_prev: Angles at the previous timestep, shape (N, 3).
@@ -28,8 +32,10 @@ def detect_flips(
         Boolean array of shape (N, 3) where True indicates a flip
         occurred for that pendulum bob between the two timesteps.
     """
-    angle_change = theta_curr - theta_prev
-    flip_detected = np.abs(angle_change) > np.pi
+    wrapped_prev = (theta_prev + np.pi) % (2 * np.pi) - np.pi
+    wrapped_curr = (theta_curr + np.pi) % (2 * np.pi) - np.pi
+    wrapped_delta = np.abs(wrapped_curr - wrapped_prev)
+    flip_detected = wrapped_delta > np.pi
 
     return flip_detected
 
