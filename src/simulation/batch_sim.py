@@ -14,6 +14,7 @@ large grids that do not fit in RAM. Supports resuming interrupted runs.
 
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -71,6 +72,7 @@ def simulate_batch(
     t_max: float = 15.0,
     flip_callback: Callable[[NDArray[np.float64], NDArray[np.float64], float], None]
     | None = None,
+    logfile: str | None = None,
 ) -> dict:
     """Simulate N triple pendulums from given initial angles.
 
@@ -85,6 +87,9 @@ def simulate_batch(
         flip_callback: Optional callback invoked each step with signature
             (theta_prev, theta_curr, current_time). Typically a
             FlipTimeTracker.update method.
+        logfile: Optional path to a progress logfile. When provided,
+            timestamped progress lines are written and flushed after
+            each update so the file can be monitored in real time.
 
     Returns:
         Dictionary with:
@@ -97,59 +102,76 @@ def simulate_batch(
     num_steps = int(np.ceil(t_max / dt))
     progress_interval = max(1, num_steps // 10)
 
-    # Build the flip tracker (used internally and optionally via callback)
-    flip_tracker = FlipTimeTracker(num_pendulums)
+    # ── Logging helper ──────────────────────────────────────────────
+    log_fh = open(logfile, "w") if logfile else None
 
-    # Convert degrees to radians and initialize state: [theta1, theta2, theta3, 0, 0, 0]
-    state = np.zeros((num_pendulums, 6), dtype=np.float64)
-    state[:, :3] = np.radians(initial_thetas)
+    def log(msg: str) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] {msg}"
+        print(line)
+        if log_fh:
+            log_fh.write(line + "\n")
+            log_fh.flush()
 
-    print(f"Simulating {num_pendulums} pendulums for {t_max}s (dt={dt}, steps={num_steps})")
+    try:
+        # Build the flip tracker (used internally and optionally via callback)
+        flip_tracker = FlipTimeTracker(num_pendulums)
 
-    current_time = 0.0
-    actual_steps_taken = 0
+        # Convert degrees to radians and initialize state: [theta1, theta2, theta3, 0, 0, 0]
+        state = np.zeros((num_pendulums, 6), dtype=np.float64)
+        state[:, :3] = np.radians(initial_thetas)
 
-    for step_index in range(num_steps):
-        theta_prev = state[:, :3].copy()
+        log(f"Simulating {num_pendulums} pendulums for {t_max}s (dt={dt}, steps={num_steps})")
 
-        state = rk4_step(state, dt, derivatives)
-        current_time = (step_index + 1) * dt
-        actual_steps_taken = step_index + 1
+        current_time = 0.0
+        actual_steps_taken = 0
 
-        theta_curr = state[:, :3]
+        for step_index in range(num_steps):
+            theta_prev = state[:, :3].copy()
 
-        # Update internal flip tracker
-        flip_tracker.update(theta_prev, theta_curr, current_time)
+            state = rk4_step(state, dt, derivatives)
+            current_time = (step_index + 1) * dt
+            actual_steps_taken = step_index + 1
 
-        # Invoke external callback if provided
-        if flip_callback is not None:
-            flip_callback(theta_prev, theta_curr, current_time)
+            theta_curr = state[:, :3]
 
-        # Progress reporting every 10%
-        if (step_index + 1) % progress_interval == 0:
-            percent_complete = 100.0 * (step_index + 1) / num_steps
-            flipped_fraction = flip_tracker.fraction_flipped
-            print(
-                f"  Progress: {percent_complete:5.1f}% "
-                f"(t={current_time:.2f}s, "
-                f"flipped={flipped_fraction:.1%})"
-            )
+            # Update internal flip tracker
+            flip_tracker.update(theta_prev, theta_curr, current_time)
 
-        # Early stopping: all pendulums have flipped
-        if flip_tracker.all_flipped:
-            print(
-                f"  Early stop at t={current_time:.2f}s: "
-                f"all {num_pendulums} pendulums have flipped."
-            )
-            break
+            # Invoke external callback if provided
+            if flip_callback is not None:
+                flip_callback(theta_prev, theta_curr, current_time)
 
-    flip_times = flip_tracker.get_flip_times()
-    num_flipped = int(np.sum(~np.isnan(flip_times)))
+            # Progress reporting every 10%
+            if (step_index + 1) % progress_interval == 0:
+                percent_complete = 100.0 * (step_index + 1) / num_steps
+                flipped_fraction = flip_tracker.fraction_flipped
+                log(
+                    f"Progress: {percent_complete:5.1f}% "
+                    f"(t={current_time:.2f}s, "
+                    f"flipped={flipped_fraction:.1%}, "
+                    f"step {step_index + 1}/{num_steps})"
+                )
 
-    print(
-        f"Simulation complete: {num_flipped}/{num_pendulums} pendulums flipped "
-        f"({actual_steps_taken} steps, t_final={current_time:.2f}s)"
-    )
+            # Early stopping: all pendulums have flipped
+            if flip_tracker.all_flipped:
+                log(
+                    f"Early stop at t={current_time:.2f}s: "
+                    f"all {num_pendulums} pendulums have flipped."
+                )
+                break
+
+        flip_times = flip_tracker.get_flip_times()
+        num_flipped = int(np.sum(~np.isnan(flip_times)))
+
+        log(
+            f"Simulation complete: {num_flipped}/{num_pendulums} pendulums flipped "
+            f"({actual_steps_taken} steps, t_final={current_time:.2f}s)"
+        )
+
+    finally:
+        if log_fh:
+            log_fh.close()
 
     simulation_results = {
         "flip_times": flip_times,
@@ -162,6 +184,139 @@ def simulate_batch(
             "t_final": current_time,
             "num_flipped": num_flipped,
             "fraction_flipped": num_flipped / num_pendulums,
+        },
+    }
+
+    return simulation_results
+
+
+def simulate_batch_fast(
+    initial_thetas: NDArray[np.float64],
+    dt: float = 0.01,
+    t_max: float = 15.0,
+    logfile: str | None = None,
+) -> dict:
+    """Simulate N triple pendulums using Numba JIT (fast path).
+
+    Uses a fully fused RK4 integrator with analytical 3x3 Cramer's rule
+    solver, compiled via Numba. Typically 10x faster than the NumPy path.
+    Falls back to the standard NumPy path if Numba is not installed.
+
+    Args:
+        initial_thetas: Initial angles of shape (N, 3) in degrees.
+        dt: Integration timestep in seconds.
+        t_max: Maximum simulation time in seconds.
+        logfile: Optional path to a progress logfile.
+
+    Returns:
+        Dictionary with "flip_times", "final_states", and "metadata".
+    """
+    from src.simulation.physics import HAS_NUMBA
+
+    if not HAS_NUMBA:
+        print("Numba not available, falling back to NumPy path")
+        return simulate_batch(initial_thetas, dt=dt, t_max=t_max, logfile=logfile)
+
+    from src.simulation.physics import rk4_step_numba
+
+    num_pendulums = initial_thetas.shape[0]
+    num_steps = int(np.ceil(t_max / dt))
+    progress_interval = max(1, num_steps // 10)
+
+    # ── Logging helper ──────────────────────────────────────────────
+    log_fh = open(logfile, "w") if logfile else None
+
+    def log(msg: str) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] {msg}"
+        print(line)
+        if log_fh:
+            log_fh.write(line + "\n")
+            log_fh.flush()
+
+    try:
+        flip_tracker = FlipTimeTracker(num_pendulums)
+
+        # Convert degrees to radians, initialize state [theta, omega=0]
+        state = np.zeros((num_pendulums, 6), dtype=np.float64)
+        state[:, :3] = np.radians(initial_thetas)
+
+        log(f"[numba] Simulating {num_pendulums} pendulums for {t_max}s "
+            f"(dt={dt}, steps={num_steps})")
+
+        # JIT warmup: compile on a tiny batch
+        log("[numba] Compiling JIT kernels (first call only)...")
+        warmup_start = time.monotonic()
+        _warmup_state = np.zeros((2, 6), dtype=np.float64)
+        rk4_step_numba(_warmup_state, dt)
+        warmup_elapsed = time.monotonic() - warmup_start
+        log(f"[numba] JIT compilation done in {warmup_elapsed:.1f}s")
+
+        current_time = 0.0
+        actual_steps_taken = 0
+        sim_start = time.monotonic()
+
+        for step_index in range(num_steps):
+            prev_thetas = state[:, :3]
+
+            state = rk4_step_numba(state, dt)
+            current_time = (step_index + 1) * dt
+            actual_steps_taken = step_index + 1
+
+            curr_thetas = state[:, :3]
+
+            # Flip detection (fast NumPy operations, not the bottleneck)
+            flip_tracker.update(prev_thetas, curr_thetas, current_time)
+
+            # Progress reporting every 10%
+            if (step_index + 1) % progress_interval == 0:
+                percent_complete = 100.0 * (step_index + 1) / num_steps
+                flipped_fraction = flip_tracker.fraction_flipped
+                elapsed = time.monotonic() - sim_start
+                steps_per_sec = (step_index + 1) / elapsed
+                log(
+                    f"Progress: {percent_complete:5.1f}% "
+                    f"(t={current_time:.2f}s, "
+                    f"flipped={flipped_fraction:.1%}, "
+                    f"step {step_index + 1}/{num_steps}, "
+                    f"{steps_per_sec:.0f} steps/s)"
+                )
+
+            # Early stopping: all pendulums have flipped
+            if flip_tracker.all_flipped:
+                log(
+                    f"Early stop at t={current_time:.2f}s: "
+                    f"all {num_pendulums} pendulums have flipped."
+                )
+                break
+
+        flip_times = flip_tracker.get_flip_times()
+        num_flipped = int(np.sum(~np.isnan(flip_times)))
+        total_elapsed = time.monotonic() - sim_start
+
+        log(
+            f"Simulation complete: {num_flipped}/{num_pendulums} pendulums flipped "
+            f"({actual_steps_taken} steps, t_final={current_time:.2f}s, "
+            f"wall={total_elapsed:.1f}s)"
+        )
+
+    finally:
+        if log_fh:
+            log_fh.close()
+
+    simulation_results = {
+        "flip_times": flip_times,
+        "final_states": state,
+        "metadata": {
+            "num_pendulums": num_pendulums,
+            "dt": dt,
+            "t_max": t_max,
+            "actual_steps": actual_steps_taken,
+            "t_final": current_time,
+            "num_flipped": num_flipped,
+            "fraction_flipped": num_flipped / num_pendulums,
+            "backend": "numba",
+            "wall_time_seconds": round(total_elapsed, 2),
         },
     }
 
@@ -253,6 +408,7 @@ def simulate_batch_gpu(
     t_max: float = 15.0,
     chunk_size: int = 10000,
     device: str = "cuda",
+    logfile: str | None = None,
 ) -> dict:
     """Simulate N triple pendulums on the GPU using torchdiffeq.
 
@@ -267,6 +423,9 @@ def simulate_batch_gpu(
         t_max: Maximum simulation time in seconds.
         chunk_size: Number of pendulums to process per GPU chunk.
         device: Torch device string (e.g. "cuda", "cuda:0", "cpu").
+        logfile: Optional path to a progress logfile. When provided,
+            timestamped progress lines are written and flushed after
+            each update so the file can be monitored in real time.
 
     Returns:
         Dictionary with:
@@ -282,73 +441,93 @@ def simulate_batch_gpu(
     num_pendulums = initial_thetas.shape[0]
     num_chunks = int(np.ceil(num_pendulums / chunk_size))
 
-    # Convert all initial angles from degrees to radians
-    initial_thetas_rad = np.radians(initial_thetas.astype(np.float64))
+    # ── Logging helper ──────────────────────────────────────────────
+    log_fh = open(logfile, "w") if logfile else None
 
-    # Build time points on the target device
-    torch_device = torch.device(device)
-    time_points = torch.arange(
-        0, t_max + dt, dt, dtype=torch.float64, device=torch_device,
-    )
+    def log(msg: str) -> None:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{timestamp}] {msg}"
+        print(line)
+        if log_fh:
+            log_fh.write(line + "\n")
+            log_fh.flush()
 
-    print(
-        f"GPU simulation: {num_pendulums} pendulums, "
-        f"{num_chunks} chunk(s) of up to {chunk_size}, "
-        f"t_max={t_max}s, device={device}"
-    )
+    try:
+        # Convert all initial angles from degrees to radians
+        initial_thetas_rad = np.radians(initial_thetas.astype(np.float64))
 
-    # Pre-allocate result arrays
-    all_flip_times = np.full(num_pendulums, np.nan, dtype=np.float64)
-    all_final_states = np.zeros((num_pendulums, 6), dtype=np.float64)
-
-    for chunk_index in range(num_chunks):
-        chunk_start = chunk_index * chunk_size
-        chunk_end = min(chunk_start + chunk_size, num_pendulums)
-        chunk_count = chunk_end - chunk_start
-
-        print(
-            f"  Chunk {chunk_index + 1}/{num_chunks}: "
-            f"pendulums {chunk_start}..{chunk_end - 1} ({chunk_count} total)"
+        # Build time points on the target device
+        torch_device = torch.device(device)
+        time_points = torch.arange(
+            0, t_max + dt, dt, dtype=torch.float64, device=torch_device,
         )
 
-        # Build initial state tensor: [theta1, theta2, theta3, 0, 0, 0]
-        initial_state = torch.zeros(
-            (chunk_count, 6), dtype=torch.float64, device=torch_device,
+        log(
+            f"GPU simulation: {num_pendulums} pendulums, "
+            f"{num_chunks} chunk(s) of up to {chunk_size}, "
+            f"t_max={t_max}s, device={device}"
         )
-        initial_state[:, :3] = torch.from_numpy(
-            initial_thetas_rad[chunk_start:chunk_end]
-        ).to(torch_device)
 
-        # Integrate using dopri5 (returns shape (T, N_chunk, 6))
-        with torch.no_grad():
-            trajectory = torchdiffeq.odeint(
-                derivatives_torch,
-                initial_state,
-                time_points,
-                method="dopri5",
+        # Pre-allocate result arrays
+        all_flip_times = np.full(num_pendulums, np.nan, dtype=np.float64)
+        all_final_states = np.zeros((num_pendulums, 6), dtype=np.float64)
+
+        for chunk_index in range(num_chunks):
+            chunk_start = chunk_index * chunk_size
+            chunk_end = min(chunk_start + chunk_size, num_pendulums)
+            chunk_count = chunk_end - chunk_start
+
+            log(
+                f"Chunk {chunk_index + 1}/{num_chunks}: "
+                f"pendulums {chunk_start}..{chunk_end - 1} ({chunk_count} total)"
             )
 
-        # Detect flips from the full trajectory
-        chunk_flip_times = _detect_flips_from_trajectory_torch(
-            trajectory, time_points,
+            # Build initial state tensor: [theta1, theta2, theta3, 0, 0, 0]
+            initial_state = torch.zeros(
+                (chunk_count, 6), dtype=torch.float64, device=torch_device,
+            )
+            initial_state[:, :3] = torch.from_numpy(
+                initial_thetas_rad[chunk_start:chunk_end]
+            ).to(torch_device)
+
+            # Integrate using dopri5 (returns shape (T, N_chunk, 6))
+            with torch.no_grad():
+                trajectory = torchdiffeq.odeint(
+                    derivatives_torch,
+                    initial_state,
+                    time_points,
+                    method="dopri5",
+                )
+
+            # Detect flips from the full trajectory
+            chunk_flip_times = _detect_flips_from_trajectory_torch(
+                trajectory, time_points,
+            )
+            all_flip_times[chunk_start:chunk_end] = chunk_flip_times
+
+            # Store final state (last timestep)
+            final_state_chunk = trajectory[-1].cpu().numpy()
+            all_final_states[chunk_start:chunk_end] = final_state_chunk
+
+            num_flipped_chunk = int(np.sum(~np.isnan(chunk_flip_times)))
+            cumulative_done = chunk_end
+            percent_complete = 100.0 * cumulative_done / num_pendulums
+            log(
+                f"  Chunk {chunk_index + 1}/{num_chunks} done: "
+                f"flipped {num_flipped_chunk}/{chunk_count} "
+                f"({num_flipped_chunk / chunk_count:.1%}) — "
+                f"overall {percent_complete:.1f}%"
+            )
+
+        total_flipped = int(np.sum(~np.isnan(all_flip_times)))
+        log(
+            f"GPU simulation complete: {total_flipped}/{num_pendulums} pendulums "
+            f"flipped ({total_flipped / num_pendulums:.1%})"
         )
-        all_flip_times[chunk_start:chunk_end] = chunk_flip_times
 
-        # Store final state (last timestep)
-        final_state_chunk = trajectory[-1].cpu().numpy()
-        all_final_states[chunk_start:chunk_end] = final_state_chunk
-
-        num_flipped_chunk = int(np.sum(~np.isnan(chunk_flip_times)))
-        print(
-            f"    Flipped: {num_flipped_chunk}/{chunk_count} "
-            f"({num_flipped_chunk / chunk_count:.1%})"
-        )
-
-    total_flipped = int(np.sum(~np.isnan(all_flip_times)))
-    print(
-        f"GPU simulation complete: {total_flipped}/{num_pendulums} pendulums "
-        f"flipped ({total_flipped / num_pendulums:.1%})"
-    )
+    finally:
+        if log_fh:
+            log_fh.close()
 
     simulation_results = {
         "flip_times": all_flip_times,

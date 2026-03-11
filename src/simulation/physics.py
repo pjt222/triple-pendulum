@@ -17,6 +17,8 @@ Physics summary:
     - Solve M * alpha = -f for angular accelerations
 """
 
+import math
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -289,3 +291,131 @@ def derivatives_torch(t: "torch.Tensor", state: "torch.Tensor") -> "torch.Tensor
     state_derivatives = torch.cat([omega, angular_accelerations], dim=1)  # (N, 6)
 
     return state_derivatives
+
+
+# ---------------------------------------------------------------------------
+# Numba JIT-compiled implementations (high-performance path)
+# ---------------------------------------------------------------------------
+
+try:
+    from numba import njit, prange
+    HAS_NUMBA = True
+except ImportError:
+    HAS_NUMBA = False
+
+
+if HAS_NUMBA:
+    @njit(cache=True)
+    def _deriv_single(t0, t1, t2, w0, w1, w2):
+        """Compute derivatives for a single triple pendulum.
+
+        All physics inlined: mass matrix, force vector, 3x3 Cramer's rule.
+        Returns (dtheta0, dtheta1, dtheta2, domega0, domega1, domega2).
+        """
+        g = 9.81
+
+        # Angle differences (3 unique pairs)
+        d01 = t0 - t1
+        d02 = t0 - t2
+        d12 = t1 - t2
+
+        cd01 = math.cos(d01)
+        cd02 = math.cos(d02)
+        cd12 = math.cos(d12)
+
+        sd01 = math.sin(d01)
+        sd02 = math.sin(d02)
+        sd12 = math.sin(d12)
+
+        # Mass matrix: M[i][j] = A[i][j] * cos(theta_i - theta_j)
+        # A = [[3,2,1],[2,2,1],[1,1,1]], diagonals: cos(0)=1
+        m00 = 3.0
+        m01 = 2.0 * cd01
+        m02 = cd02
+        m10 = m01  # symmetric
+        m11 = 2.0
+        m12 = cd12
+        m20 = m02
+        m21 = m12
+        m22 = 1.0
+
+        # Force vector: f_i = sum_j A[i][j]*sin(ti-tj)*wj^2 + gw[i]*g*sin(ti)
+        # sin(ti-ti)=0 so diagonal coriolis terms vanish
+        w0sq = w0 * w0
+        w1sq = w1 * w1
+        w2sq = w2 * w2
+
+        f0 = 2.0 * sd01 * w1sq + sd02 * w2sq + 3.0 * g * math.sin(t0)
+        f1 = -2.0 * sd01 * w0sq + sd12 * w2sq + 2.0 * g * math.sin(t1)
+        f2 = -sd02 * w0sq - sd12 * w1sq + g * math.sin(t2)
+
+        # Solve M * alpha = -f via Cramer's rule
+        b0 = -f0
+        b1 = -f1
+        b2 = -f2
+
+        det = (m00 * (m11 * m22 - m12 * m21)
+             - m01 * (m10 * m22 - m12 * m20)
+             + m02 * (m10 * m21 - m11 * m20))
+        inv_det = 1.0 / det
+
+        a0 = (b0 * (m11 * m22 - m12 * m21)
+            - m01 * (b1 * m22 - m12 * b2)
+            + m02 * (b1 * m21 - m11 * b2)) * inv_det
+        a1 = (m00 * (b1 * m22 - m12 * b2)
+            - b0 * (m10 * m22 - m12 * m20)
+            + m02 * (m10 * b2 - b1 * m20)) * inv_det
+        a2 = (m00 * (m11 * b2 - b1 * m21)
+            - m01 * (m10 * b2 - b1 * m20)
+            + b0 * (m10 * m21 - m11 * m20)) * inv_det
+
+        return (w0, w1, w2, a0, a1, a2)
+
+    @njit(parallel=True, cache=True)
+    def rk4_step_numba(state, dt):
+        """Full RK4 step for N pendulums, fully fused with Cramer's rule.
+
+        Each pendulum is independent — computed in parallel via prange.
+        Zero intermediate arrays: all values are scalars in CPU registers.
+        """
+        num_pendulums = state.shape[0]
+        result = np.empty((num_pendulums, 6), dtype=np.float64)
+        dt_half = 0.5 * dt
+        dt_sixth = dt / 6.0
+
+        for n in prange(num_pendulums):
+            s0 = state[n, 0]
+            s1 = state[n, 1]
+            s2 = state[n, 2]
+            s3 = state[n, 3]
+            s4 = state[n, 4]
+            s5 = state[n, 5]
+
+            # k1 = f(state)
+            k1_0, k1_1, k1_2, k1_3, k1_4, k1_5 = _deriv_single(
+                s0, s1, s2, s3, s4, s5)
+
+            # k2 = f(state + 0.5*dt*k1)
+            k2_0, k2_1, k2_2, k2_3, k2_4, k2_5 = _deriv_single(
+                s0 + dt_half * k1_0, s1 + dt_half * k1_1, s2 + dt_half * k1_2,
+                s3 + dt_half * k1_3, s4 + dt_half * k1_4, s5 + dt_half * k1_5)
+
+            # k3 = f(state + 0.5*dt*k2)
+            k3_0, k3_1, k3_2, k3_3, k3_4, k3_5 = _deriv_single(
+                s0 + dt_half * k2_0, s1 + dt_half * k2_1, s2 + dt_half * k2_2,
+                s3 + dt_half * k2_3, s4 + dt_half * k2_4, s5 + dt_half * k2_5)
+
+            # k4 = f(state + dt*k3)
+            k4_0, k4_1, k4_2, k4_3, k4_4, k4_5 = _deriv_single(
+                s0 + dt * k3_0, s1 + dt * k3_1, s2 + dt * k3_2,
+                s3 + dt * k3_3, s4 + dt * k3_4, s5 + dt * k3_5)
+
+            # result = state + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
+            result[n, 0] = s0 + dt_sixth * (k1_0 + 2.0 * k2_0 + 2.0 * k3_0 + k4_0)
+            result[n, 1] = s1 + dt_sixth * (k1_1 + 2.0 * k2_1 + 2.0 * k3_1 + k4_1)
+            result[n, 2] = s2 + dt_sixth * (k1_2 + 2.0 * k2_2 + 2.0 * k3_2 + k4_2)
+            result[n, 3] = s3 + dt_sixth * (k1_3 + 2.0 * k2_3 + 2.0 * k3_3 + k4_3)
+            result[n, 4] = s4 + dt_sixth * (k1_4 + 2.0 * k2_4 + 2.0 * k3_4 + k4_4)
+            result[n, 5] = s5 + dt_sixth * (k1_5 + 2.0 * k2_5 + 2.0 * k3_5 + k4_5)
+
+        return result
