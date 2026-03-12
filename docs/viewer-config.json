@@ -9,7 +9,10 @@
     "colormap": "cyberpunk",
     "invertColormap": false
   },
-  "timeFilter": {},
+  "timeFilter": {
+    "minSeconds": 4.0,
+    "maxSeconds": 5.0
+  },
   "display": {
     "showStable": false,
     "showAxes": false,
