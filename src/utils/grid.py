@@ -44,6 +44,50 @@ def make_grid(
     return initial_conditions
 
 
+def make_grid_chunks(
+    points_per_axis: int,
+    chunk_size: int = 1_000_000,
+    theta_min: float = -170.0,
+    theta_max: float = 170.0,
+):
+    """Yield chunks of initial-angle triplets without materializing the full grid.
+
+    This generator produces the same results as :func:`make_grid` but yields
+    manageable slices, enabling simulation of grids that exceed available RAM
+    (e.g. 1000^3 = 1 billion points ~ 24 GB).
+
+    Parameters
+    ----------
+    points_per_axis : int
+        Number of uniformly spaced sample points along each theta axis.
+    chunk_size : int
+        Maximum number of grid points per yielded chunk (default 1M).
+    theta_min : float
+        Lower bound of the angle range in degrees (default -170).
+    theta_max : float
+        Upper bound of the angle range in degrees (default 170).
+
+    Yields
+    ------
+    tuple of (np.ndarray, int, int)
+        ``(chunk_thetas, start_idx, end_idx)`` where *chunk_thetas* has shape
+        ``(end_idx - start_idx, 3)`` with angles in degrees, and *start_idx* /
+        *end_idx* are flat indices into the full ``points_per_axis**3`` grid.
+    """
+    axis_values = np.linspace(theta_min, theta_max, points_per_axis)
+    total = points_per_axis ** 3
+    n = points_per_axis
+
+    for start in range(0, total, chunk_size):
+        end = min(start + chunk_size, total)
+        flat_indices = np.arange(start, end)
+        i = flat_indices // (n * n)
+        j = (flat_indices // n) % n
+        k = flat_indices % n
+        chunk_thetas = np.column_stack([axis_values[i], axis_values[j], axis_values[k]])
+        yield chunk_thetas, start, end
+
+
 def grid_to_indices(
     thetas: npt.NDArray[np.float64],
     points_per_axis: int,

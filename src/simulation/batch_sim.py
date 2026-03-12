@@ -33,6 +33,20 @@ except ImportError:
     torch = None
     torchdiffeq = None
 
+try:
+    from src.simulation.cuda_sim import (
+        HAS_CUPY,
+        HAS_PYCUDA,
+        HAS_TORCH as HAS_TORCH_CUDA,
+        simulate_batch_cuda,
+        simulate_batch_cupy,
+        simulate_batch_gpu_rk4,
+    )
+except ImportError:
+    HAS_CUPY = False
+    HAS_PYCUDA = False
+    HAS_TORCH_CUDA = False
+
 
 def rk4_step(
     state: NDArray[np.float64],
@@ -546,6 +560,52 @@ def simulate_batch_gpu(
     }
 
     return simulation_results
+
+
+# ---------------------------------------------------------------------------
+# Automatic backend selection
+# ---------------------------------------------------------------------------
+
+
+def simulate_batch_auto(
+    initial_thetas: NDArray[np.float64],
+    dt: float = 0.01,
+    t_max: float = 15.0,
+    logfile: str | None = None,
+) -> dict:
+    """Simulate N triple pendulums using the best available backend.
+
+    Selection order: PyCUDA CUDA C > PyTorch GPU RK4 > Numba CPU > NumPy CPU.
+
+    Args:
+        initial_thetas: Initial angles of shape (N, 3) in degrees.
+        dt: Integration timestep in seconds.
+        t_max: Maximum simulation time in seconds.
+        logfile: Optional path to a progress logfile.
+
+    Returns:
+        Dictionary with "flip_times", "final_states", and "metadata".
+    """
+    if HAS_PYCUDA:
+        print("Backend: PyCUDA CUDA C kernel")
+        return simulate_batch_cuda(initial_thetas, dt=dt, t_max=t_max, logfile=logfile)
+
+    if HAS_CUPY:
+        print("Backend: CuPy CUDA C kernel")
+        return simulate_batch_cupy(initial_thetas, dt=dt, t_max=t_max, logfile=logfile)
+
+    if HAS_TORCH_CUDA:
+        print("Backend: PyTorch GPU RK4")
+        return simulate_batch_gpu_rk4(initial_thetas, dt=dt, t_max=t_max, logfile=logfile)
+
+    from src.simulation.physics import HAS_NUMBA
+
+    if HAS_NUMBA:
+        print("Backend: Numba CPU")
+        return simulate_batch_fast(initial_thetas, dt=dt, t_max=t_max, logfile=logfile)
+
+    print("Backend: NumPy CPU")
+    return simulate_batch(initial_thetas, dt=dt, t_max=t_max, logfile=logfile)
 
 
 # ---------------------------------------------------------------------------
