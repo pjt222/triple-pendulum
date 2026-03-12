@@ -404,6 +404,10 @@
     <!-- Stats -->
     <div id="stats">Loading...</div>
 
+    <div class="control-row" style="margin-top:8px">
+      <button id="reset-view" onclick="resetView()" style="flex:1;padding:4px 0;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--bg-panel-border);border-radius:4px;cursor:pointer;">Reset view</button>
+    </div>
+
     <hr class="divider" />
 
     <!-- Dataset -->
@@ -412,8 +416,8 @@
       <div class="control-row" style="margin-bottom:7px">
         <label>Backend</label>
         <select id="backend-select" style="flex:1" onchange="changeBackend()">
-          <option value="cpu" selected>CPU</option>
-          <option value="gpu">GPU</option>
+          <option value="cpu">CPU</option>
+          <option value="gpu" selected>GPU</option>
         </select>
       </div>
       <div class="control-row">
@@ -456,8 +460,8 @@
 
       <div class="control-row" style="margin-bottom:7px">
         <label>Point size</label>
-        <input type="range" id="point-size" min="1" max="10" step="0.5" value="2" oninput="updatePointSize()" />
-        <span class="value-label" id="point-size-val">2</span>
+        <input type="range" id="point-size" min="1" max="10" step="0.5" value="1" oninput="updatePointSize()" />
+        <span class="value-label" id="point-size-val">1</span>
       </div>
 
       <div class="control-row">
@@ -487,7 +491,20 @@
 
       <div class="control-row" style="margin-top:7px">
         <label>Show stable</label>
-        <input type="checkbox" id="show-stable" checked onchange="applyFilters()" />
+        <input type="checkbox" id="show-stable" onchange="applyFilters()" />
+      </div>
+      <div class="control-row" style="margin-top:4px">
+        <label>Show axes</label>
+        <input type="checkbox" id="show-axes" checked onchange="toggleAxes()" />
+      </div>
+      <div class="control-row" style="margin-top:4px">
+        <label>Auto-rotate</label>
+        <input type="checkbox" id="auto-rotate" onchange="toggleAutoRotate()" />
+      </div>
+      <div class="control-row" style="margin-top:4px">
+        <label>Rot. speed</label>
+        <input type="range" id="rotate-speed" min="0.1" max="5" step="0.1" value="1" oninput="updateRotateSpeed()" />
+        <span class="value-label" id="rotate-speed-val">1.0</span>
       </div>
     </div>
 
@@ -729,10 +746,11 @@ const DATASETS = {
     { resolution: 40, file: 'simulation_40_cpu.json', label: '40\u00B3 (64K pts)' },
   ],
   gpu: [
-    { resolution: 200, file: 'simulation_1000_ds200_gpu.json', label: '1000\u00B3 \u2192 200\u00B3 (1.0B src)' },
-    { resolution: 200, file: 'simulation_900_ds200_gpu.json', label: '900\u00B3 \u2192 200\u00B3 (729M src)' },
-    { resolution: 200, file: 'simulation_800_ds200_gpu.json', label: '800\u00B3 \u2192 200\u00B3 (512M src)' },
-    { resolution: 200, file: 'simulation_700_ds200_gpu.json', label: '700\u00B3 \u2192 200\u00B3 (343M src)' },
+    // Downsampled entries — uncomment as simulations complete:
+    // { resolution: 200, file: 'simulation_1000_ds200_gpu.json', label: '1000\u00B3 \u2192 200\u00B3 (1.0B src)' },
+    // { resolution: 200, file: 'simulation_900_ds200_gpu.json', label: '900\u00B3 \u2192 200\u00B3 (729M src)' },
+    // { resolution: 200, file: 'simulation_800_ds200_gpu.json', label: '800\u00B3 \u2192 200\u00B3 (512M src)' },
+    // { resolution: 200, file: 'simulation_700_ds200_gpu.json', label: '700\u00B3 \u2192 200\u00B3 (343M src)' },
     { resolution: 600, file: 'simulation_600_gpu.json', label: '600\u00B3 (216M pts)' },
     { resolution: 500, file: 'simulation_500_gpu.json', label: '500\u00B3 (125M pts)' },
     { resolution: 400, file: 'simulation_400_gpu.json', label: '400\u00B3 (64M pts)' },
@@ -759,24 +777,26 @@ const DATASETS = {
   ],
 };
 
-function populateResolutionSelect(backend) {
+function populateResolutionSelect(backend, defaultResolution) {
   const select = document.getElementById('resolution-select');
   const entries = DATASETS[backend] || [];
   select.innerHTML = '';
-  for (const entry of entries) {
+  let defaultIdx = 0;
+  for (let i = 0; i < entries.length; i++) {
     const option = document.createElement('option');
-    option.value = entry.resolution;
-    option.textContent = entry.label;
+    option.value = i;
+    option.textContent = entries[i].label;
     select.appendChild(option);
+    if (defaultResolution && entries[i].resolution === defaultResolution) defaultIdx = i;
   }
+  select.value = defaultIdx;
 }
 
 function getSelectedFile() {
   const backend = document.getElementById('backend-select').value;
-  const resolution = parseInt(document.getElementById('resolution-select').value);
+  const idx = parseInt(document.getElementById('resolution-select').value);
   const entries = DATASETS[backend] || [];
-  const match = entries.find(e => e.resolution === resolution);
-  return match ? match.file : entries[0]?.file;
+  return entries[idx]?.file;
 }
 
 async function loadData() {
@@ -868,10 +888,11 @@ function initThree() {
   state.controls.maxDistance = 10;
 
   // Subtle axis helper
-  const axesHelper = new THREE.AxesHelper(1.2);
-  axesHelper.material.opacity = 0.35;
-  axesHelper.material.transparent = true;
-  state.scene.add(axesHelper);
+  state.axesHelper = new THREE.AxesHelper(1.2);
+  state.axesHelper.material.opacity = 0.35;
+  state.axesHelper.material.transparent = true;
+  state.axesHelper.visible = document.getElementById('show-axes').checked;
+  state.scene.add(state.axesHelper);
 
   window.addEventListener('resize', onResize);
 }
@@ -962,7 +983,7 @@ function buildPointCloud(data) {
   geometry.setAttribute('color', new THREE.BufferAttribute(displayColors, 3));
 
   const material = new THREE.PointsMaterial({
-    size: 0.026,
+    size: 0.013,
     vertexColors: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
@@ -1086,12 +1107,13 @@ function updateStats(showing, total, totalFlipped) {
 
 async function reloadDataset() {
   const backend = document.getElementById('backend-select').value;
-  const resolution = document.getElementById('resolution-select').value;
+  const select = document.getElementById('resolution-select');
+  const selectedLabel = select.options[select.selectedIndex]?.textContent || '';
 
   const loading = document.getElementById('loading');
   loading.style.display = 'flex';
   loading.classList.remove('hidden');
-  document.getElementById('loading-text').textContent = `Loading ${backend.toUpperCase()} ${resolution}\u00B3 data...`;
+  document.getElementById('loading-text').textContent = `Loading ${backend.toUpperCase()} ${selectedLabel} data...`;
   document.getElementById('demo-badge').style.display = 'none';
 
   await new Promise(r => setTimeout(r, 50));
@@ -1206,7 +1228,32 @@ function hideAllOctants() {
   applyFilters();
 }
 
+function toggleAutoRotate() {
+  state.controls.autoRotate = document.getElementById('auto-rotate').checked;
+  state.controls.autoRotateSpeed = parseFloat(document.getElementById('rotate-speed').value);
+}
+
+function updateRotateSpeed() {
+  const val = parseFloat(document.getElementById('rotate-speed').value);
+  document.getElementById('rotate-speed-val').textContent = val.toFixed(1);
+  state.controls.autoRotateSpeed = val;
+}
+
+function toggleAxes() {
+  if (state.axesHelper) state.axesHelper.visible = document.getElementById('show-axes').checked;
+}
+
+function resetView() {
+  state.camera.position.set(2.2, 1.6, 2.2);
+  state.controls.target.set(0, 0, 0);
+  state.controls.update();
+}
+
 // Expose to inline handlers
+window.toggleAutoRotate = toggleAutoRotate;
+window.updateRotateSpeed = updateRotateSpeed;
+window.toggleAxes = toggleAxes;
+window.resetView = resetView;
 window.updatePointSize = updatePointSize;
 window.updateOpacity = updateOpacity;
 window.updateTimeFilter = updateTimeFilter;
@@ -1232,23 +1279,110 @@ function animate() {
 // ─── Initialise time-range sliders from real data ────────────────────────────
 
 function initSliders() {
+  // Time filter defaults are applied by applyConfigTimeFilter()
+}
+
+// ─── Config ───────────────────────────────────────────────────────────────────
+
+let CONFIG = null;
+
+async function loadConfig() {
+  try {
+    const res = await fetch('viewer-config.json');
+    if (res.ok) CONFIG = await res.json();
+  } catch (e) {
+    console.warn('Could not load viewer-config.json, using HTML defaults');
+  }
+}
+
+function applyConfig() {
+  if (!CONFIG) return;
+
+  const d = CONFIG.dataset || {};
+  const r = CONFIG.rendering || {};
+  const t = CONFIG.timeFilter || {};
+  const disp = CONFIG.display || {};
+
+  // Dataset
+  if (d.backend) document.getElementById('backend-select').value = d.backend;
+
+  // Rendering controls
+  if (r.pointSize != null) {
+    document.getElementById('point-size').value = r.pointSize;
+    document.getElementById('point-size-val').textContent = r.pointSize;
+  }
+  if (r.opacity != null) {
+    document.getElementById('opacity').value = r.opacity;
+    document.getElementById('opacity-val').textContent = r.opacity;
+  }
+  if (r.colormap) document.getElementById('colormap-select').value = r.colormap;
+
+  // Display
+  if (disp.showStable === false) document.getElementById('show-stable').checked = false;
+  if (disp.showStable === true) document.getElementById('show-stable').checked = true;
+  if (disp.showAxes === false) document.getElementById('show-axes').checked = false;
+  if (disp.showAxes === true) document.getElementById('show-axes').checked = true;
+  if (disp.autoRotate != null) document.getElementById('auto-rotate').checked = !!disp.autoRotate;
+  if (disp.autoRotateSpeed != null) {
+    document.getElementById('rotate-speed').value = disp.autoRotateSpeed;
+    document.getElementById('rotate-speed-val').textContent = disp.autoRotateSpeed.toFixed(1);
+  }
+  if (disp.sliceThickness != null) {
+    document.getElementById('slice-thickness').value = disp.sliceThickness;
+    document.getElementById('slice-thickness-val').textContent = disp.sliceThickness;
+  }
+}
+
+function applyConfigToMaterial() {
+  if (!CONFIG) return;
+  const r = CONFIG.rendering || {};
+  const disp = CONFIG.display || {};
+  if (state.points) {
+    if (r.pointSize != null) state.points.material.size = r.pointSize * 0.013;
+    if (r.opacity != null) state.points.material.opacity = r.opacity;
+  }
+  if (state.controls && disp.autoRotate) {
+    state.controls.autoRotate = true;
+    state.controls.autoRotateSpeed = disp.autoRotateSpeed || 1.0;
+  }
+  if (state.axesHelper && disp.showAxes != null) {
+    state.axesHelper.visible = disp.showAxes;
+  }
+}
+
+function applyConfigTimeFilter() {
+  if (!CONFIG) return;
+  const t = CONFIG.timeFilter || {};
   const tMax = state.tMax;
-  document.getElementById('time-max-val').textContent = (tMax > 0 ? tMax.toFixed(1) : '--') + ' s';
-  document.getElementById('time-min-val').textContent = '0.0 s';
+  if (tMax <= 0) return;
+  if (t.minSeconds != null) {
+    const norm = Math.min(t.minSeconds / tMax, 1.0);
+    document.getElementById('time-min').value = norm;
+    document.getElementById('time-min-val').textContent = (norm * tMax).toFixed(1) + ' s';
+  }
+  if (t.maxSeconds != null) {
+    const norm = Math.min(t.maxSeconds / tMax, 1.0);
+    document.getElementById('time-max').value = norm;
+    document.getElementById('time-max-val').textContent = (norm * tMax).toFixed(1) + ' s';
+  }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+  await loadConfig();
+  applyConfig();
+
   initThree();
   animate();
   drawLegend();
 
-  // Populate resolution dropdown for initial backend
-  populateResolutionSelect(document.getElementById('backend-select').value);
+  const defaultResolution = CONFIG?.dataset?.defaultResolution || null;
+  populateResolutionSelect(document.getElementById('backend-select').value, defaultResolution);
   const data = await loadData();
   buildPointCloud(data);
-  initSliders();
+  applyConfigToMaterial();
+  applyConfigTimeFilter();
   applyFilters();
 
   // Hide loading screen

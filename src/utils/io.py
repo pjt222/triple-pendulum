@@ -22,6 +22,13 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+# orjson is an optional fast-path for JSON serialization (~10x faster
+# than stdlib json for large numeric arrays).
+try:
+    import orjson
+except ImportError:
+    orjson = None
+
 # h5py is an optional dependency -- the HDF5 helpers gracefully degrade
 # to informative errors when it is not installed.
 try:
@@ -75,19 +82,38 @@ def save_results_json(
     combined_metadata["total_flipped"] = total_flipped
 
     # Convert flip times: NaN -> None (becomes JSON null).
-    serializable_flip_times: list[float | None] = [
-        None if np.isnan(value) else float(value) for value in flat_flip_times
-    ]
+    # orjson handles numpy arrays natively and is ~10x faster for large arrays.
+    if orjson is not None:
+        # Convert to Python list (numpy .tolist() is C-fast), then replace
+        # NaN values with None for JSON null output.
+        flip_list = flat_flip_times.tolist()
+        nan_indices = np.flatnonzero(np.isnan(flat_flip_times))
+        for idx in nan_indices:
+            flip_list[idx] = None
 
-    document: dict[str, Any] = {
-        "grid_size": grid_size,
-        "theta_range": list(theta_range),
-        "flip_times": serializable_flip_times,
-        "metadata": combined_metadata,
-    }
+        document: dict[str, Any] = {
+            "grid_size": grid_size,
+            "theta_range": list(theta_range),
+            "flip_times": flip_list,
+            "metadata": combined_metadata,
+        }
 
-    with open(output_path, "w", encoding="utf-8") as file_handle:
-        json.dump(document, file_handle)
+        with open(output_path, "wb") as file_handle:
+            file_handle.write(orjson.dumps(document))
+    else:
+        serializable_flip_times: list[float | None] = [
+            None if np.isnan(value) else float(value) for value in flat_flip_times
+        ]
+
+        document = {
+            "grid_size": grid_size,
+            "theta_range": list(theta_range),
+            "flip_times": serializable_flip_times,
+            "metadata": combined_metadata,
+        }
+
+        with open(output_path, "w", encoding="utf-8") as file_handle:
+            json.dump(document, file_handle)
 
 
 def load_results_json(path: str | Path) -> dict[str, Any]:

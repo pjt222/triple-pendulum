@@ -1,0 +1,26 @@
+{
+  "dataset": {
+    "backend": "gpu",
+    "defaultResolution": 200
+  },
+  "rendering": {
+    "pointSize": 1,
+    "opacity": 0.05,
+    "colormap": "cyberpunk",
+    "invertColormap": false
+  },
+  "timeFilter": {
+    "minSeconds": 2.0,
+    "maxSeconds": 3.0
+  },
+  "display": {
+    "showStable": false,
+    "showAxes": false,
+    "autoRotate": false,
+    "autoRotateSpeed": 1.0,
+    "sliceThickness": 5,
+    "sliceX": 0,
+    "sliceY": 0,
+    "sliceZ": 0
+  }
+}
