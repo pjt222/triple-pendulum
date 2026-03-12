@@ -739,6 +739,13 @@ function drawLegend() {
 
 // ─── Data loading ─────────────────────────────────────────────────────────────
 
+// Base URL prefix for simulation data files.
+// Local dev: files are in data/ subdirectory relative to viewer.
+// HF Spaces: data lives in a separate HF dataset repo.
+const DATA_BASE_URL = window.location.hostname.endsWith('.hf.space')
+  ? 'https://huggingface.co/datasets/pjt222/triple-pendulum-data/resolve/main/'
+  : 'data/';
+
 // Dataset manifest: backend -> [{resolution, file, label}]
 const DATASETS = {
   cpu: [
@@ -792,21 +799,47 @@ function populateResolutionSelect(backend, defaultResolution) {
   select.value = defaultIdx;
 }
 
-function getSelectedFile() {
+function getSelectedEntry() {
   const backend = document.getElementById('backend-select').value;
   const idx = parseInt(document.getElementById('resolution-select').value);
   const entries = DATASETS[backend] || [];
-  return entries[idx]?.file;
+  return entries[idx] || null;
 }
+
+function getSelectedFile() {
+  const entry = getSelectedEntry();
+  return entry ? DATA_BASE_URL + entry.file : null;
+}
+
+// Max total points the browser can handle (geometry buffers + colors + filters).
+// 400^3 = 64M points needs ~2.5GB of ArrayBuffers — near the limit for most browsers.
+const MAX_BROWSER_POINTS = 70_000_000; // ~400^3
 
 async function loadData() {
   const dataPath = getSelectedFile();
+  const entry = getSelectedEntry();
   if (!dataPath) {
     console.warn('No dataset file available, using demo mode');
     document.getElementById('demo-badge').style.display = 'block';
     return generateDemoData(20);
   }
+
+  // Check if resolution exceeds browser memory limits
+  const resolution = entry?.resolution || 0;
+  const totalPoints = resolution ** 3;
+  if (totalPoints > MAX_BROWSER_POINTS) {
+    console.warn(`Resolution ${resolution}^3 = ${(totalPoints/1e6).toFixed(0)}M points exceeds browser limit`);
+    document.getElementById('demo-badge').style.display = 'block';
+    document.getElementById('demo-badge').textContent =
+      `${resolution}\u00B3 too large for browser (${(totalPoints/1e6).toFixed(0)}M pts). Try \u2264400\u00B3.`;
+    return generateDemoData(20);
+  }
+
   try {
+    const loadingText = document.getElementById('loading-text');
+    if (resolution >= 200) {
+      loadingText.textContent += ' (large file, please wait...)';
+    }
     const res = await fetch(dataPath);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -1121,6 +1154,8 @@ async function reloadDataset() {
   const data = await loadData();
   buildPointCloud(data);
   initSliders();
+  const adaptive = computeAdaptiveTimeFilter();
+  if (adaptive) applyTimeFilter(adaptive.minSeconds, adaptive.maxSeconds);
   applyFilters();
 
   loading.classList.add('hidden');
@@ -1350,21 +1385,54 @@ function applyConfigToMaterial() {
   }
 }
 
-function applyConfigTimeFilter() {
-  if (!CONFIG) return;
-  const t = CONFIG.timeFilter || {};
+function computeAdaptiveTimeFilter() {
+  // Target a max number of visible points for smooth rendering.
+  // Assumes ~85% of pendulums flip and flip times are roughly
+  // distributed over [0, tMax]. Adjusts the time window width
+  // to keep visible point count near the target.
+  const TARGET_POINTS = 2_000_000;
+  const totalPoints = state.pointCount;
+  const tMax = state.tMax;
+  if (totalPoints <= 0 || tMax <= 0) return null;
+
+  const estimatedFlipFraction = 0.85;
+  const flippedPoints = totalPoints * estimatedFlipFraction;
+
+  if (flippedPoints <= TARGET_POINTS) {
+    // Small enough to show everything
+    return { minSeconds: 0, maxSeconds: tMax };
+  }
+
+  // Window width needed to show ~TARGET_POINTS
+  const windowWidth = (TARGET_POINTS / flippedPoints) * tMax;
+  // Center around 2.5s (the interesting chaos boundary region)
+  const center = 2.5;
+  const minSec = Math.max(0, center - windowWidth / 2);
+  const maxSec = Math.min(tMax, minSec + windowWidth);
+
+  return { minSeconds: minSec, maxSeconds: maxSec };
+}
+
+function applyTimeFilter(minSeconds, maxSeconds) {
   const tMax = state.tMax;
   if (tMax <= 0) return;
-  if (t.minSeconds != null) {
-    const norm = Math.min(t.minSeconds / tMax, 1.0);
-    document.getElementById('time-min').value = norm;
-    document.getElementById('time-min-val').textContent = (norm * tMax).toFixed(1) + ' s';
-  }
-  if (t.maxSeconds != null) {
-    const norm = Math.min(t.maxSeconds / tMax, 1.0);
-    document.getElementById('time-max').value = norm;
-    document.getElementById('time-max-val').textContent = (norm * tMax).toFixed(1) + ' s';
-  }
+  const normMin = Math.min(minSeconds / tMax, 1.0);
+  const normMax = Math.min(maxSeconds / tMax, 1.0);
+  document.getElementById('time-min').value = normMin;
+  document.getElementById('time-min-val').textContent = (normMin * tMax).toFixed(1) + ' s';
+  document.getElementById('time-max').value = normMax;
+  document.getElementById('time-max-val').textContent = (normMax * tMax).toFixed(1) + ' s';
+}
+
+function applyConfigTimeFilter() {
+  // Use config values if set, otherwise compute adaptive defaults
+  const configFilter = CONFIG?.timeFilter || {};
+  const adaptive = computeAdaptiveTimeFilter();
+  if (!adaptive) return;
+
+  const minSec = configFilter.minSeconds != null ? configFilter.minSeconds : adaptive.minSeconds;
+  const maxSec = configFilter.maxSeconds != null ? configFilter.maxSeconds : adaptive.maxSeconds;
+  applyTimeFilter(minSec, maxSec);
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────

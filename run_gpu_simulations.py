@@ -2,7 +2,8 @@
 """Run GPU simulations for all target resolutions.
 
 Iterates through resolutions [20, 30, 40, ..., 200, 300, ..., 1000], runs the
-CUDA kernel for each, and saves results as JSON to both data/ and docs/.
+CUDA kernel for each, and saves results as JSON to data/. Optionally copies
+results to a Hugging Face Space checkout via --hf-space-dir.
 
 Small resolutions (<=600^3) use single-launch simulation and direct JSON output.
 Large resolutions (>=700^3) use chunked simulation with memmap output, then
@@ -63,7 +64,7 @@ def format_count(number):
 
 
 def run_single_resolution(
-    resolution, simulate_fn, data_directory, docs_directory, dt, t_max, log
+    resolution, simulate_fn, data_directory, hf_data_directory, dt, t_max, log
 ):
     """Run a single resolution using the single-launch path (<=600^3)."""
     num_pendulums = resolution ** 3
@@ -93,21 +94,23 @@ def run_single_resolution(
         metadata=metadata,
     )
 
-    # Copy to docs/ for the viewer
-    docs_destination = docs_directory / json_filename
-    shutil.copy2(json_path, docs_destination)
-
     file_size_mb = json_path.stat().st_size / (1024 * 1024)
 
     log(f"Resolution {resolution}^3: "
         f"{format_count(num_pendulums)} pendulums, "
         f"{wall_time:.2f}s, {fraction_flipped:.1%} flipped, "
         f"{file_size_mb:.1f}MB")
-    log(f"Saved: {json_path} -> {docs_destination}")
+    log(f"Saved: {json_path}")
+
+    # Copy to HF Space data directory if configured
+    if hf_data_directory:
+        hf_destination = hf_data_directory / json_filename
+        shutil.copy2(json_path, hf_destination)
+        log(f"Copied to HF: {hf_destination}")
 
 
 def run_chunked_resolution(
-    resolution, data_directory, docs_directory, dt, t_max, log
+    resolution, data_directory, hf_data_directory, dt, t_max, log
 ):
     """Run a single resolution using the chunked path (>=700^3)."""
     from src.simulation.cuda_sim import simulate_chunked_cupy
@@ -149,12 +152,14 @@ def run_chunked_resolution(
         output_path=ds_json_path,
     )
 
-    # Copy downsampled JSON to docs/
-    docs_destination = docs_directory / ds_json_filename
-    shutil.copy2(ds_json_path, docs_destination)
-
     file_size_mb = ds_json_path.stat().st_size / (1024 * 1024)
-    log(f"Downsampled: {ds_json_path} -> {docs_destination} ({file_size_mb:.1f}MB)")
+    log(f"Downsampled: {ds_json_path} ({file_size_mb:.1f}MB)")
+
+    # Copy downsampled JSON to HF Space if configured
+    if hf_data_directory:
+        hf_destination = hf_data_directory / ds_json_filename
+        shutil.copy2(ds_json_path, hf_destination)
+        log(f"Copied to HF: {hf_destination}")
 
 
 def main():
@@ -181,6 +186,10 @@ def main():
         "--t-max", type=float, default=15.0,
         help="Max simulation time (default: 15.0)",
     )
+    parser.add_argument(
+        "--hf-space-dir", type=str, default=None,
+        help="Path to HF Space checkout; copies results to <dir>/data/",
+    )
     args = parser.parse_args()
 
     # Determine which resolutions to run
@@ -193,8 +202,13 @@ def main():
 
     # Setup paths
     data_directory = Path("data")
-    docs_directory = Path("docs")
     data_directory.mkdir(exist_ok=True)
+
+    # HF Space directory for viewer data (replaces old docs/ copy)
+    hf_data_directory = None
+    if args.hf_space_dir:
+        hf_data_directory = Path(args.hf_space_dir) / "data"
+        hf_data_directory.mkdir(parents=True, exist_ok=True)
 
     # Master log
     master_log_path = data_directory / "sim_cuda_run.log"
@@ -242,12 +256,12 @@ def main():
 
             if resolution > CHUNKED_THRESHOLD:
                 run_chunked_resolution(
-                    resolution, data_directory, docs_directory,
+                    resolution, data_directory, hf_data_directory,
                     args.dt, args.t_max, log,
                 )
             else:
                 run_single_resolution(
-                    resolution, simulate_fn, data_directory, docs_directory,
+                    resolution, simulate_fn, data_directory, hf_data_directory,
                     args.dt, args.t_max, log,
                 )
 

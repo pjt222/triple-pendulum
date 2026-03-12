@@ -1,0 +1,67 @@
+name: Deploy to Hugging Face Spaces
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/index.html'
+      - 'docs/viewer-config.json'
+      - 'hf-spaces/README.md'
+  workflow_dispatch:
+
+concurrency:
+  group: hf-spaces-deploy
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-hf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Upload viewer files to Hugging Face Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          pip install huggingface_hub
+
+          # Upload only the viewer files (data is uploaded manually)
+          python3 -c "
+          from huggingface_hub import HfApi
+          import os
+
+          api = HfApi(token=os.environ['HF_TOKEN'])
+
+          # Upload HF README
+          api.upload_file(
+              path_or_fileobj='hf-spaces/README.md',
+              path_in_repo='README.md',
+              repo_id='pjt222/triple-pendulum',
+              repo_type='space',
+          )
+
+          # Upload viewer files
+          for local, remote in [
+              ('docs/index.html', 'index.html'),
+              ('docs/viewer-config.json', 'viewer-config.json'),
+          ]:
+              api.upload_file(
+                  path_or_fileobj=local,
+                  path_in_repo=remote,
+                  repo_id='pjt222/triple-pendulum',
+                  repo_type='space',
+              )
+              print(f'Uploaded {local} -> {remote}')
+
+          print('Viewer deployment complete!')
+          "

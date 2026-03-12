@@ -2,6 +2,8 @@
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 
+**[Live Interactive Viewer](https://huggingface.co/spaces/pjt222/triple-pendulum)** (hosted on Hugging Face Spaces)
+
 3D voxel visualization of triple pendulum chaos. Each voxel represents an initial condition triplet (theta_1, theta_2, theta_3), colored by time-to-first-flip. Extends the 2D double pendulum chaos maps from [Drew's Campfire](https://github.com/drewscampfire/Drew-s-Campfire-Videos) into the third dimension.
 
 ## Quick Start
