@@ -1,65 +1,69 @@
 # Triple Pendulum 3D Chaos Voxel Map
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+**[Live Interactive Viewer](https://huggingface.co/spaces/pjt222/triple-pendulum)** on Hugging Face Spaces
 
-**[Live Interactive Viewer](https://huggingface.co/spaces/pjt222/triple-pendulum)** (hosted on Hugging Face Spaces)
+![Fractal cross-sections of the triple pendulum chaos map at six θ₃ slices](renders/slice_gallery_theta3.png)
 
-3D voxel visualization of triple pendulum chaos. Each voxel represents an initial condition triplet (theta_1, theta_2, theta_3), colored by time-to-first-flip. Extends the 2D double pendulum chaos maps from [Drew's Campfire](https://github.com/drewscampfire/Drew-s-Campfire-Videos) into the third dimension.
+Map the chaos of a triple pendulum by sweeping all possible starting angles (θ₁, θ₂, θ₃) and measuring how long each configuration takes to flip. All three pendulums start from rest, so the full 6D phase space collapses to a 3D grid of initial conditions -- each voxel colored by its time-to-first-flip. The result is a fractal structure that extends Drew's Campfire's [2D double pendulum chaos maps](https://github.com/drewscampfire/Drew-s-Campfire-Videos) into the third dimension.
+
+![Animated sweep through θ₃ slices](renders/slice_sweep_theta3.gif)
 
 ## Quick Start
 
 ```bash
-# Install
-pip install -e .
+pip install -e .            # CPU only (NumPy)
+pip install -e ".[gpu]"     # GPU support (PyTorch + torchdiffeq)
 
-# Run CPU simulation (40^3 grid, ~2 min)
-python -m src.simulation.batch_sim
-
-# Serve interactive viewer
-python -m http.server 8000
-# Open http://localhost:8000/src/visualization/viewer.html
+python3 run_gpu_simulations.py --resolutions 40   # simulate a 40³ grid
+python3 serve.py                                   # viewer at http://localhost:8000
 ```
 
-## Physics
+## Simulation
 
-Triple pendulum with equal point masses (m=1) and equal rod lengths (l=1):
+The simulator auto-selects the fastest available backend:
 
-- **Mass matrix:** M_ij = a_ij * cos(theta_i - theta_j), coupling A = [[3,2,1],[2,2,1],[1,1,1]]
-- **Force vector:** f_i = sum_j a_ij * sin(theta_i - theta_j) * omega_j^2 + (n-i) * g * sin(theta_i)
-- **EOM:** M * alpha = -f, solved for angular accelerations at each timestep
-- All simulations start from rest (omega=0), reducing the 6D state space to 3D initial conditions
+| Backend | 40³ (64K) | 200³ (8M) | 600³ (216M) |
+|---------|-----------|-----------|-------------|
+| CUDA C (CuPy) | 0.5s | 46s | ~25 min |
+| Numba JIT | 41s | ~6 min | -- |
+| NumPy | 120s | ~20 min | -- |
+
+Backend priority: **CuPy > PyCUDA > PyTorch GPU > Numba > NumPy** (auto-detected at runtime).
+
+Two grid geometries (realms) sample initial conditions differently:
+
+```bash
+python3 run_gpu_simulations.py --realm cube --resolutions 20 40 100 200   # uniform Cartesian (default)
+python3 run_gpu_simulations.py --realm sphere --resolutions 20 40 100 200 # Fibonacci-spiral shells (~48% fewer points)
+```
+
+## Viewer
+
+The [interactive viewer](https://huggingface.co/spaces/pjt222/triple-pendulum) is a Three.js point cloud with additive blending that naturally highlights fractal boundaries.
+
+- **Slice controls** -- fix any θ axis to explore 2D cross-sections
+- **6 colormaps** -- cyberpunk (default), magma, viridis, inferno, plasma, cividis
+- **Adaptive time filter** -- auto-narrows to keep ~2M visible points at high resolutions
+- **Auto-rotate** with adjustable speed, axes toggle, and colormap invert
 
 ## Project Structure
 
 ```
 src/
-  simulation/     Physics engine and batch simulation
-    physics.py    Triple pendulum equations of motion
-    batch_sim.py  Batch RK4/dopri8 integration
-    metrics.py    Chaos metrics (flip time, Lyapunov)
-  visualization/  Rendering and interactive viewers
-    viewer.html   Three.js point cloud viewer
-    colormap.py   Colormaps and data-to-color transforms
-  utils/          Grid construction and data I/O
-    grid.py       Initial condition grid builder
-    io.py         JSON, memmap, HDF5 I/O
-data/             Simulation output (gitignored)
-notebooks/        Exploration notebooks
-renders/          Output images and videos
+  simulation/       Physics engine, batch RK4, CUDA C kernel
+  analysis/         Chaos metrics and post-processing
+  visualization/    Colormaps and rendering tools
+  utils/            Grid construction, data I/O, binary format
+docs/               Interactive viewer (index.html + simulation data)
+data/               Raw simulation output (gitignored)
+renders/            Images and animations
 ```
-
-## Roadmap
-
-- **Phase 0:** Project setup and CPU prototype
-- **Phase 1:** GPU-accelerated simulation (PyTorch + torchdiffeq, target 200^3 = 8M voxels)
-- **Phase 2:** High-quality volume rendering (boundary-only, isosurfaces, slice animations)
-- **Phase 3:** Extended analysis (Lyapunov exponents, fractal dimension, energy transfer)
-- **Phase 4:** Publication and media (Blender renders, Manim animations)
 
 ## Prior Art
 
 - [Drew's Campfire](https://github.com/drewscampfire/Drew-s-Campfire-Videos) -- 2D double pendulum chaos maps
-- [jonnyhyman/Chaos](https://github.com/jonnyhyman/Chaos) -- 1000^3 voxel rendering for Veritasium
+- [jonnyhyman/Chaos](https://github.com/jonnyhyman/Chaos) -- 1000³ voxel rendering for Veritasium
 - [Jake VanderPlas](https://jakevdp.github.io/blog/2017/03/08/triple-pendulum-chaos/) -- Triple pendulum via SymPy
 
 ## License
