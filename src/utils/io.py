@@ -43,6 +43,10 @@ def save_results_json(
     theta_range: tuple[float, float],
     flip_times: npt.NDArray[np.float64],
     metadata: dict[str, Any] | None = None,
+    *,
+    grid_type: str = "cube",
+    positions: npt.NDArray[np.float64] | None = None,
+    grid_params: dict[str, Any] | None = None,
 ) -> None:
     """Save simulation results to a JSON file.
 
@@ -52,11 +56,11 @@ def save_results_json(
         Destination file path.  Parent directories are created if needed.
     grid_size : int
         Number of sample points per axis (the "n" in an n**3 grid).
+        For sphere grids this is the number of radial shells.
     theta_range : tuple of float
         ``(theta_min, theta_max)`` in degrees.
     flip_times : np.ndarray
-        Flip-time values as a 1-D array of shape ``(n**3,)`` or a 3-D
-        array of shape ``(n, n, n)``.  ``np.nan`` means the pendulum
+        Flip-time values as a 1-D array.  ``np.nan`` means the pendulum
         never flipped during the simulation window.
     metadata : dict, optional
         Extra metadata to store alongside the results.  Common keys:
@@ -65,6 +69,17 @@ def save_results_json(
         UTC timestamp (ISO 8601) is added automatically.  Counts for
         ``total_points`` and ``total_flipped`` are always (re)computed
         from *flip_times*.
+    grid_type : str
+        Either ``"cube"`` (default) or ``"sphere"``.  When ``"sphere"``,
+        additional fields (``grid_type``, ``grid_params``, ``positions``,
+        ``total_points``) are written to the JSON document.
+    positions : np.ndarray, optional
+        Explicit viewer coordinates of shape ``(M, 3)``, normalised to
+        ``[-1, 1]``.  Written as a flat interleaved array
+        ``[x0, y0, z0, x1, y1, z1, ...]``.  Required for sphere grids.
+    grid_params : dict, optional
+        Sphere-specific parameters (``resolution``, ``r_max``,
+        ``num_shells``, etc.).
     """
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -81,11 +96,19 @@ def save_results_json(
     combined_metadata["total_points"] = total_points
     combined_metadata["total_flipped"] = total_flipped
 
+    # Prepare positions list (sphere only).
+    positions_list: list[float] | None = None
+    if positions is not None:
+        # Round to 4 decimal places to control JSON size while preserving
+        # more than enough precision for point-cloud visualisation.
+        rounded_positions = np.round(
+            np.asarray(positions, dtype=np.float64).ravel(), decimals=4
+        )
+        positions_list = rounded_positions.tolist()
+
     # Convert flip times: NaN -> None (becomes JSON null).
     # orjson handles numpy arrays natively and is ~10x faster for large arrays.
     if orjson is not None:
-        # Convert to Python list (numpy .tolist() is C-fast), then replace
-        # NaN values with None for JSON null output.
         flip_list = flat_flip_times.tolist()
         nan_indices = np.flatnonzero(np.isnan(flat_flip_times))
         for idx in nan_indices:
@@ -97,6 +120,15 @@ def save_results_json(
             "flip_times": flip_list,
             "metadata": combined_metadata,
         }
+
+        # Sphere-specific fields.
+        if grid_type != "cube":
+            document["grid_type"] = grid_type
+            document["total_points"] = total_points
+        if grid_params is not None:
+            document["grid_params"] = grid_params
+        if positions_list is not None:
+            document["positions"] = positions_list
 
         with open(output_path, "wb") as file_handle:
             file_handle.write(orjson.dumps(document))
@@ -111,6 +143,14 @@ def save_results_json(
             "flip_times": serializable_flip_times,
             "metadata": combined_metadata,
         }
+
+        if grid_type != "cube":
+            document["grid_type"] = grid_type
+            document["total_points"] = total_points
+        if grid_params is not None:
+            document["grid_params"] = grid_params
+        if positions_list is not None:
+            document["positions"] = positions_list
 
         with open(output_path, "w", encoding="utf-8") as file_handle:
             json.dump(document, file_handle)
@@ -129,7 +169,10 @@ def load_results_json(path: str | Path) -> dict[str, Any]:
     dict
         Dictionary with keys ``"grid_size"``, ``"theta_range"``,
         ``"flip_times"`` (as a 1-D NumPy array with ``np.nan`` for
-        entries that were ``null`` in JSON), and ``"metadata"``.
+        entries that were ``null`` in JSON), ``"metadata"``,
+        ``"grid_type"`` (``"cube"`` or ``"sphere"``), ``"positions"``
+        (NumPy array of shape ``(M, 3)`` or ``None``), and
+        ``"grid_params"`` (dict or ``None``).
     """
     with open(path, encoding="utf-8") as file_handle:
         document: dict[str, Any] = json.load(file_handle)
@@ -140,11 +183,24 @@ def load_results_json(path: str | Path) -> dict[str, Any]:
         dtype=np.float64,
     )
 
+    # Sphere-specific fields (backward-compatible: missing = cube).
+    grid_type: str = document.get("grid_type", "cube")
+
+    restored_positions: npt.NDArray[np.float64] | None = None
+    if "positions" in document:
+        raw_positions: list[float] = document["positions"]
+        restored_positions = np.array(raw_positions, dtype=np.float64).reshape(-1, 3)
+
+    grid_params: dict[str, Any] | None = document.get("grid_params")
+
     return {
         "grid_size": document["grid_size"],
         "theta_range": document["theta_range"],
         "flip_times": restored_flip_times,
         "metadata": document.get("metadata", {}),
+        "grid_type": grid_type,
+        "positions": restored_positions,
+        "grid_params": grid_params,
     }
 
 

@@ -414,6 +414,13 @@
     <div>
       <div class="section-label">Dataset</div>
       <div class="control-row" style="margin-bottom:7px">
+        <label>Realm</label>
+        <select id="realm-select" style="flex:1" onchange="changeRealm()">
+          <option value="cube" selected>Cube</option>
+          <option value="sphere">Sphere</option>
+        </select>
+      </div>
+      <div class="control-row" style="margin-bottom:7px">
         <label>Backend</label>
         <select id="backend-select" style="flex:1" onchange="changeBackend()">
           <option value="cpu">CPU</option>
@@ -510,43 +517,65 @@
 
     <hr class="divider" />
 
-    <!-- Slice controls -->
-    <div>
-      <div class="section-label">Slice controls</div>
+    <!-- Slice controls (cube realm) -->
+    <div id="cube-slice-controls">
+      <div>
+        <div class="section-label">Slice controls</div>
 
-      <div class="control-row" style="margin-bottom:4px">
+        <div class="control-row" style="margin-bottom:4px">
+          <label>Thickness</label>
+          <input type="range" id="slice-thickness" min="1" max="20" step="1" value="5" oninput="updateSliceThickness()" />
+          <span class="value-label" id="slice-thickness-val">5&deg;</span>
+        </div>
+      </div>
+
+      <!-- Axis slices -->
+      <div class="slice-axis">
+        <div class="slice-axis-header">
+          <input type="checkbox" id="slice-x-en" onchange="applyFilters()" />
+          <label>&#952;&#8321; slice</label>
+          <span class="value-label" id="slice-x-val">0&deg;</span>
+        </div>
+        <input type="range" id="slice-x" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('x')" />
+      </div>
+
+      <div class="slice-axis">
+        <div class="slice-axis-header">
+          <input type="checkbox" id="slice-y-en" onchange="applyFilters()" />
+          <label>&#952;&#8322; slice</label>
+          <span class="value-label" id="slice-y-val">0&deg;</span>
+        </div>
+        <input type="range" id="slice-y" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('y')" />
+      </div>
+
+      <div class="slice-axis">
+        <div class="slice-axis-header">
+          <input type="checkbox" id="slice-z-en" onchange="applyFilters()" />
+          <label>&#952;&#8323; slice</label>
+          <span class="value-label" id="slice-z-val">0&deg;</span>
+        </div>
+        <input type="range" id="slice-z" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('z')" />
+      </div>
+    </div>
+
+    <!-- Shell slice controls (sphere realm) -->
+    <div id="sphere-slice-controls" style="display:none">
+      <div class="section-label">Shell slice</div>
+
+      <div class="slice-axis">
+        <div class="slice-axis-header">
+          <input type="checkbox" id="shell-slice-en" onchange="applyFilters()" />
+          <label>r shell</label>
+          <span class="value-label" id="shell-radius-val">85&deg;</span>
+        </div>
+        <input type="range" id="shell-radius" min="0" max="170" step="1" value="85" oninput="updateShellLabel()" />
+      </div>
+
+      <div class="control-row" style="margin-top:4px">
         <label>Thickness</label>
-        <input type="range" id="slice-thickness" min="1" max="20" step="1" value="5" oninput="updateSliceThickness()" />
-        <span class="value-label" id="slice-thickness-val">5°</span>
+        <input type="range" id="shell-thickness" min="1" max="30" step="1" value="10" oninput="updateShellThicknessLabel()" />
+        <span class="value-label" id="shell-thickness-val">10&deg;</span>
       </div>
-    </div>
-
-    <!-- Axis slices -->
-    <div class="slice-axis">
-      <div class="slice-axis-header">
-        <input type="checkbox" id="slice-x-en" onchange="applyFilters()" />
-        <label>&#952;&#8321; slice</label>
-        <span class="value-label" id="slice-x-val">0°</span>
-      </div>
-      <input type="range" id="slice-x" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('x')" />
-    </div>
-
-    <div class="slice-axis">
-      <div class="slice-axis-header">
-        <input type="checkbox" id="slice-y-en" onchange="applyFilters()" />
-        <label>&#952;&#8322; slice</label>
-        <span class="value-label" id="slice-y-val">0°</span>
-      </div>
-      <input type="range" id="slice-y" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('y')" />
-    </div>
-
-    <div class="slice-axis">
-      <div class="slice-axis-header">
-        <input type="checkbox" id="slice-z-en" onchange="applyFilters()" />
-        <label>&#952;&#8323; slice</label>
-        <span class="value-label" id="slice-z-val">0°</span>
-      </div>
-      <input type="range" id="slice-z" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('z')" />
     </div>
 
     <hr class="divider" />
@@ -619,11 +648,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 const state = {
   gridSize: 0,
   thetaRange: [-170, 170],
-  flipTimes: null,       // Float32Array, length N^3, NaN = never flipped
+  flipTimes: null,       // Float32Array, length totalPoints, NaN = never flipped
   tMax: 0,
   pointCount: 0,
   currentColormap: 'cyberpunk',
   invertColormap: false,
+  // Realm
+  realm: 'cube',         // 'cube' or 'sphere'
+  gridParams: null,      // sphere metadata (resolution, r_max, num_shells, ...)
   // Three.js objects
   scene: null,
   camera: null,
@@ -631,12 +663,13 @@ const state = {
   controls: null,
   points: null,
   geometry: null,
+  realmOverlay: null,    // sphere wireframe overlay
   // Per-point cache (computed once from raw data)
-  positions: null,       // Float32Array N^3 * 3
-  rawColors: null,       // Float32Array N^3 * 3 (base colormap, no opacity baking)
-  isStable: null,        // Uint8Array N^3, 1 = never flipped
+  positions: null,       // Float32Array totalPoints * 3
+  rawColors: null,       // Float32Array totalPoints * 3 (base colormap, no opacity baking)
+  isStable: null,        // Uint8Array totalPoints, 1 = never flipped
   // Visible flags computed by filter pass
-  visibleFlags: null,    // Uint8Array N^3
+  visibleFlags: null,    // Uint8Array totalPoints
 };
 
 // ─── Colormaps ───────────────────────────────────────────────────────────────
@@ -746,47 +779,62 @@ const DATA_BASE_URL = window.location.hostname.endsWith('.hf.space')
   ? 'https://huggingface.co/datasets/pjt222/triple-pendulum-data/resolve/main/'
   : 'data/';
 
-// Dataset manifest: backend -> [{resolution, file, label}]
+// Dataset manifest: realm -> backend -> [{resolution, file, label, totalPoints?}]
 const DATASETS = {
-  cpu: [
-    { resolution: 80, file: 'simulation_80_cpu.json', label: '80\u00B3 (512K pts)' },
-    { resolution: 40, file: 'simulation_40_cpu.json', label: '40\u00B3 (64K pts)' },
-  ],
-  gpu: [
-    // Downsampled entries — uncomment as simulations complete:
-    // { resolution: 200, file: 'simulation_1000_ds200_gpu.json', label: '1000\u00B3 \u2192 200\u00B3 (1.0B src)' },
-    // { resolution: 200, file: 'simulation_900_ds200_gpu.json', label: '900\u00B3 \u2192 200\u00B3 (729M src)' },
-    // { resolution: 200, file: 'simulation_800_ds200_gpu.json', label: '800\u00B3 \u2192 200\u00B3 (512M src)' },
-    // { resolution: 200, file: 'simulation_700_ds200_gpu.json', label: '700\u00B3 \u2192 200\u00B3 (343M src)' },
-    { resolution: 600, file: 'simulation_600_gpu.json', label: '600\u00B3 (216M pts)' },
-    { resolution: 500, file: 'simulation_500_gpu.json', label: '500\u00B3 (125M pts)' },
-    { resolution: 400, file: 'simulation_400_gpu.json', label: '400\u00B3 (64M pts)' },
-    { resolution: 300, file: 'simulation_300_gpu.json', label: '300\u00B3 (27M pts)' },
-    { resolution: 200, file: 'simulation_200_gpu.json', label: '200\u00B3 (8.0M pts)' },
-    { resolution: 190, file: 'simulation_190_gpu.json', label: '190\u00B3 (6.9M pts)' },
-    { resolution: 180, file: 'simulation_180_gpu.json', label: '180\u00B3 (5.8M pts)' },
-    { resolution: 170, file: 'simulation_170_gpu.json', label: '170\u00B3 (4.9M pts)' },
-    { resolution: 160, file: 'simulation_160_gpu.json', label: '160\u00B3 (4.1M pts)' },
-    { resolution: 150, file: 'simulation_150_gpu.json', label: '150\u00B3 (3.4M pts)' },
-    { resolution: 140, file: 'simulation_140_gpu.json', label: '140\u00B3 (2.7M pts)' },
-    { resolution: 130, file: 'simulation_130_gpu.json', label: '130\u00B3 (2.2M pts)' },
-    { resolution: 120, file: 'simulation_120_gpu.json', label: '120\u00B3 (1.7M pts)' },
-    { resolution: 110, file: 'simulation_110_gpu.json', label: '110\u00B3 (1.3M pts)' },
-    { resolution: 100, file: 'simulation_100_gpu.json', label: '100\u00B3 (1.0M pts)' },
-    { resolution: 90, file: 'simulation_90_gpu.json', label: '90\u00B3 (729K pts)' },
-    { resolution: 80, file: 'simulation_80_gpu.json', label: '80\u00B3 (512K pts)' },
-    { resolution: 70, file: 'simulation_70_gpu.json', label: '70\u00B3 (343K pts)' },
-    { resolution: 60, file: 'simulation_60_gpu.json', label: '60\u00B3 (216K pts)' },
-    { resolution: 50, file: 'simulation_50_gpu.json', label: '50\u00B3 (125K pts)' },
-    { resolution: 40, file: 'simulation_40_gpu.json', label: '40\u00B3 (64K pts)' },
-    { resolution: 30, file: 'simulation_30_gpu.json', label: '30\u00B3 (27K pts)' },
-    { resolution: 20, file: 'simulation_20_gpu.json', label: '20\u00B3 (8K pts)' },
-  ],
+  cube: {
+    cpu: [
+      { resolution: 80, file: 'simulation_80_cpu.json', label: '80\u00B3 (512K pts)' },
+      { resolution: 40, file: 'simulation_40_cpu.json', label: '40\u00B3 (64K pts)' },
+    ],
+    gpu: [
+      // Downsampled entries — uncomment as simulations complete:
+      // { resolution: 200, file: 'simulation_1000_ds200_gpu.json', label: '1000\u00B3 \u2192 200\u00B3 (1.0B src)' },
+      // { resolution: 200, file: 'simulation_900_ds200_gpu.json', label: '900\u00B3 \u2192 200\u00B3 (729M src)' },
+      // { resolution: 200, file: 'simulation_800_ds200_gpu.json', label: '800\u00B3 \u2192 200\u00B3 (512M src)' },
+      // { resolution: 200, file: 'simulation_700_ds200_gpu.json', label: '700\u00B3 \u2192 200\u00B3 (343M src)' },
+      { resolution: 600, file: 'simulation_600_gpu.json', label: '600\u00B3 (216M pts)' },
+      { resolution: 500, file: 'simulation_500_gpu.json', label: '500\u00B3 (125M pts)' },
+      { resolution: 400, file: 'simulation_400_gpu.json', label: '400\u00B3 (64M pts)' },
+      { resolution: 300, file: 'simulation_300_gpu.json', label: '300\u00B3 (27M pts)' },
+      { resolution: 200, file: 'simulation_200_gpu.json', label: '200\u00B3 (8.0M pts)' },
+      { resolution: 190, file: 'simulation_190_gpu.json', label: '190\u00B3 (6.9M pts)' },
+      { resolution: 180, file: 'simulation_180_gpu.json', label: '180\u00B3 (5.8M pts)' },
+      { resolution: 170, file: 'simulation_170_gpu.json', label: '170\u00B3 (4.9M pts)' },
+      { resolution: 160, file: 'simulation_160_gpu.json', label: '160\u00B3 (4.1M pts)' },
+      { resolution: 150, file: 'simulation_150_gpu.json', label: '150\u00B3 (3.4M pts)' },
+      { resolution: 140, file: 'simulation_140_gpu.json', label: '140\u00B3 (2.7M pts)' },
+      { resolution: 130, file: 'simulation_130_gpu.json', label: '130\u00B3 (2.2M pts)' },
+      { resolution: 120, file: 'simulation_120_gpu.json', label: '120\u00B3 (1.7M pts)' },
+      { resolution: 110, file: 'simulation_110_gpu.json', label: '110\u00B3 (1.3M pts)' },
+      { resolution: 100, file: 'simulation_100_gpu.json', label: '100\u00B3 (1.0M pts)' },
+      { resolution: 90, file: 'simulation_90_gpu.json', label: '90\u00B3 (729K pts)' },
+      { resolution: 80, file: 'simulation_80_gpu.json', label: '80\u00B3 (512K pts)' },
+      { resolution: 70, file: 'simulation_70_gpu.json', label: '70\u00B3 (343K pts)' },
+      { resolution: 60, file: 'simulation_60_gpu.json', label: '60\u00B3 (216K pts)' },
+      { resolution: 50, file: 'simulation_50_gpu.json', label: '50\u00B3 (125K pts)' },
+      { resolution: 40, file: 'simulation_40_gpu.json', label: '40\u00B3 (64K pts)' },
+      { resolution: 30, file: 'simulation_30_gpu.json', label: '30\u00B3 (27K pts)' },
+      { resolution: 20, file: 'simulation_20_gpu.json', label: '20\u00B3 (8K pts)' },
+    ],
+  },
+  sphere: {
+    gpu: [
+      // Sphere entries — uncomment as simulations complete:
+      // { resolution: 200, file: 'simulation_200_sphere_gpu.json', label: 'Sphere 200 (~4.2M pts)', totalPoints: 4220273 },
+      // { resolution: 100, file: 'simulation_100_sphere_gpu.json', label: 'Sphere 100 (~531K pts)', totalPoints: 531479 },
+      // { resolution: 40, file: 'simulation_40_sphere_gpu.json', label: 'Sphere 40 (~35K pts)', totalPoints: 34775 },
+      { resolution: 20, file: 'simulation_20_sphere_gpu.json', label: 'Sphere 20 (~4.5K pts)', totalPoints: 4507 },
+    ],
+  },
 };
 
-function populateResolutionSelect(backend, defaultResolution) {
+function getDatasetEntries(realm, backend) {
+  return (DATASETS[realm] || {})[backend] || [];
+}
+
+function populateResolutionSelect(realm, backend, defaultResolution) {
   const select = document.getElementById('resolution-select');
-  const entries = DATASETS[backend] || [];
+  const entries = getDatasetEntries(realm, backend);
   select.innerHTML = '';
   let defaultIdx = 0;
   for (let i = 0; i < entries.length; i++) {
@@ -800,9 +848,10 @@ function populateResolutionSelect(backend, defaultResolution) {
 }
 
 function getSelectedEntry() {
+  const realm = document.getElementById('realm-select').value;
   const backend = document.getElementById('backend-select').value;
   const idx = parseInt(document.getElementById('resolution-select').value);
-  const entries = DATASETS[backend] || [];
+  const entries = getDatasetEntries(realm, backend);
   return entries[idx] || null;
 }
 
@@ -826,7 +875,7 @@ async function loadData() {
 
   // Check if resolution exceeds browser memory limits
   const resolution = entry?.resolution || 0;
-  const totalPoints = resolution ** 3;
+  const totalPoints = entry?.totalPoints || resolution ** 3;
   if (totalPoints > MAX_BROWSER_POINTS) {
     console.warn(`Resolution ${resolution}^3 = ${(totalPoints/1e6).toFixed(0)}M points exceeds browser limit`);
     document.getElementById('demo-badge').style.display = 'block';
@@ -853,39 +902,63 @@ async function loadData() {
 }
 
 function parseSimData(json) {
+  const gridType = json.grid_type || 'cube';
   const gridSize = json.grid_size;
   const thetaMin = json.theta_min !== undefined ? json.theta_min : (json.theta_range || [-170, 170])[0];
   const thetaMax = json.theta_max !== undefined ? json.theta_max : (json.theta_range || [-170, 170])[1];
   const thetaRange = [thetaMin, thetaMax];
-  const n3 = gridSize ** 3;
-  const flipTimes = new Float32Array(n3);
+
+  // Determine total points: sphere uses total_points or flip_times length; cube uses grid_size^3.
+  const totalPoints = (gridType === 'sphere')
+    ? (json.total_points || json.flip_times.length)
+    : gridSize ** 3;
+
+  const flipTimes = new Float32Array(totalPoints);
   flipTimes.fill(NaN);
   let tMax = 0;
 
   if (json.flip_times) {
-    // Format A: flat array of grid_size^3 values (null = no flip)
     const raw = json.flip_times;
-    for (let i = 0; i < n3; i++) {
+    const count = Math.min(raw.length, totalPoints);
+    for (let i = 0; i < count; i++) {
       const v = raw[i];
       flipTimes[i] = (v === null || v === undefined || !isFinite(v)) ? NaN : v;
       if (isFinite(flipTimes[i]) && flipTimes[i] > tMax) tMax = flipTimes[i];
     }
   } else if (json.points) {
-    // Format B: sparse array of {theta: [t1,t2,t3], flip_time: f}
+    // Format B: sparse array of {theta: [t1,t2,t3], flip_time: f} (cube only)
     const step = (thetaMax - thetaMin) / (gridSize - 1);
     for (const pt of json.points) {
       const i0 = Math.round((pt.theta[0] - thetaMin) / step);
       const i1 = Math.round((pt.theta[1] - thetaMin) / step);
       const i2 = Math.round((pt.theta[2] - thetaMin) / step);
       const idx = i0 * gridSize * gridSize + i1 * gridSize + i2;
-      if (idx >= 0 && idx < n3) {
+      if (idx >= 0 && idx < totalPoints) {
         flipTimes[idx] = pt.flip_time;
         if (pt.flip_time > tMax) tMax = pt.flip_time;
       }
     }
   }
 
-  return { gridSize, thetaRange, flipTimes, tMax };
+  // Parse explicit positions (sphere realm).
+  let explicitPositions = null;
+  if (json.positions) {
+    const rawPos = json.positions;
+    explicitPositions = new Float32Array(totalPoints * 3);
+    for (let i = 0; i < totalPoints * 3; i++) {
+      explicitPositions[i] = rawPos[i];
+    }
+  }
+
+  return {
+    gridType,
+    gridSize,
+    gridParams: json.grid_params || null,
+    thetaRange,
+    flipTimes,
+    tMax,
+    explicitPositions,
+  };
 }
 
 function generateDemoData(gridSize) {
@@ -970,31 +1043,33 @@ function computeColors() {
 }
 
 function buildPointCloud(data) {
-  const { gridSize, thetaRange, flipTimes, tMax } = data;
+  const { gridType, gridSize, gridParams, thetaRange, flipTimes, tMax, explicitPositions } = data;
   Object.assign(state, { gridSize, thetaRange, flipTimes, tMax });
+  state.realm = gridType || 'cube';
+  state.gridParams = gridParams;
 
-  const n3 = gridSize ** 3;
-  const positions = new Float32Array(n3 * 3);
-  const colors    = new Float32Array(n3 * 3);
-  const isStable  = new Uint8Array(n3);
+  const totalPoints = flipTimes.length;
+  const positions = new Float32Array(totalPoints * 3);
+  const colors    = new Float32Array(totalPoints * 3);
+  const isStable  = new Uint8Array(totalPoints);
 
-  const thetaMin = thetaRange[0];
-  const thetaSpan = thetaRange[1] - thetaRange[0];
+  if (explicitPositions) {
+    // Sphere (or any grid with explicit positions): copy directly.
+    positions.set(explicitPositions);
+  } else {
+    // Cube: reconstruct positions from grid indices.
+    for (let idx = 0; idx < totalPoints; idx++) {
+      const ix = idx % gridSize;
+      const iy = Math.floor(idx / gridSize) % gridSize;
+      const iz = Math.floor(idx / (gridSize * gridSize));
 
-  for (let idx = 0; idx < n3; idx++) {
-    const ix = idx % gridSize;
-    const iy = Math.floor(idx / gridSize) % gridSize;
-    const iz = Math.floor(idx / (gridSize * gridSize));
+      positions[idx * 3 + 0] = (ix / (gridSize - 1)) * 2 - 1;
+      positions[idx * 3 + 1] = (iy / (gridSize - 1)) * 2 - 1;
+      positions[idx * 3 + 2] = (iz / (gridSize - 1)) * 2 - 1;
+    }
+  }
 
-    // Normalize to [-1, 1]
-    const nx = (ix / (gridSize - 1)) * 2 - 1;
-    const ny = (iy / (gridSize - 1)) * 2 - 1;
-    const nz = (iz / (gridSize - 1)) * 2 - 1;
-
-    positions[idx * 3 + 0] = nx;
-    positions[idx * 3 + 1] = ny;
-    positions[idx * 3 + 2] = nz;
-
+  for (let idx = 0; idx < totalPoints; idx++) {
     const ft = flipTimes[idx];
     isStable[idx] = !isFinite(ft) ? 1 : 0;
   }
@@ -1002,8 +1077,8 @@ function buildPointCloud(data) {
   state.positions = positions;
   state.rawColors = colors;
   state.isStable  = isStable;
-  state.visibleFlags = new Uint8Array(n3);
-  state.pointCount = n3;
+  state.visibleFlags = new Uint8Array(totalPoints);
+  state.pointCount = totalPoints;
 
   // Compute colors using selected colormap
   computeColors();
@@ -1042,23 +1117,37 @@ function buildPointCloud(data) {
 function applyFilters() {
   if (!state.points) return;
 
-  const n3 = state.pointCount;
+  const totalPoints = state.pointCount;
   const gridSize = state.gridSize;
   const thetaRange = state.thetaRange;
   const thetaMin = thetaRange[0];
   const thetaSpan = thetaRange[1] - thetaRange[0];
+  const isSphere = state.realm === 'sphere';
 
   const timeMin = parseFloat(document.getElementById('time-min').value) * state.tMax;
   const timeMax = parseFloat(document.getElementById('time-max').value) * state.tMax;
   const showStable = document.getElementById('show-stable').checked;
-  const sliceThickness = parseFloat(document.getElementById('slice-thickness').value);
 
-  const xEn  = document.getElementById('slice-x-en').checked;
-  const yEn  = document.getElementById('slice-y-en').checked;
-  const zEn  = document.getElementById('slice-z-en').checked;
-  const xVal = parseFloat(document.getElementById('slice-x').value);
-  const yVal = parseFloat(document.getElementById('slice-y').value);
-  const zVal = parseFloat(document.getElementById('slice-z').value);
+  // Cube slice params
+  let sliceThickness = 5, xEn = false, yEn = false, zEn = false, xVal = 0, yVal = 0, zVal = 0;
+  if (!isSphere) {
+    sliceThickness = parseFloat(document.getElementById('slice-thickness').value);
+    xEn  = document.getElementById('slice-x-en').checked;
+    yEn  = document.getElementById('slice-y-en').checked;
+    zEn  = document.getElementById('slice-z-en').checked;
+    xVal = parseFloat(document.getElementById('slice-x').value);
+    yVal = parseFloat(document.getElementById('slice-y').value);
+    zVal = parseFloat(document.getElementById('slice-z').value);
+  }
+
+  // Sphere shell slice params
+  let shellSliceEn = false, shellRadius = 85, shellThickness = 10;
+  const rMax = state.gridParams?.r_max || 170;
+  if (isSphere) {
+    shellSliceEn = document.getElementById('shell-slice-en').checked;
+    shellRadius = parseFloat(document.getElementById('shell-radius').value);
+    shellThickness = parseFloat(document.getElementById('shell-thickness').value);
+  }
 
   // Octant visibility
   const octantVisible = new Array(8);
@@ -1071,19 +1160,12 @@ function applyFilters() {
   const rawColors = state.rawColors;
   const flipTimes = state.flipTimes;
   const isStable  = state.isStable;
+  const positions = state.positions;
 
   let showing = 0;
   let totalFlipped = 0;
 
-  for (let idx = 0; idx < n3; idx++) {
-    const ix = idx % gridSize;
-    const iy = Math.floor(idx / gridSize) % gridSize;
-    const iz = Math.floor(idx / (gridSize * gridSize));
-
-    const t1 = thetaMin + (ix / (gridSize - 1)) * thetaSpan;
-    const t2 = thetaMin + (iy / (gridSize - 1)) * thetaSpan;
-    const t3 = thetaMin + (iz / (gridSize - 1)) * thetaSpan;
-
+  for (let idx = 0; idx < totalPoints; idx++) {
     const stable = isStable[idx] === 1;
     const ft = flipTimes[idx];
 
@@ -1091,20 +1173,41 @@ function applyFilters() {
 
     let visible = true;
 
-    // Slice filtering
-    if (xEn && Math.abs(t1 - xVal) > sliceThickness) visible = false;
-    if (visible && yEn && Math.abs(t2 - yVal) > sliceThickness) visible = false;
-    if (visible && zEn && Math.abs(t3 - zVal) > sliceThickness) visible = false;
+    // Spatial filtering (realm-specific)
+    if (isSphere) {
+      // Shell slice: filter by radial distance
+      if (shellSliceEn) {
+        const px = positions[idx * 3 + 0];
+        const py = positions[idx * 3 + 1];
+        const pz = positions[idx * 3 + 2];
+        const r = Math.sqrt(px * px + py * py + pz * pz) * rMax;
+        if (Math.abs(r - shellRadius) > shellThickness) visible = false;
+      }
+    } else {
+      // Cube slices: filter by theta angle
+      const ix = idx % gridSize;
+      const iy = Math.floor(idx / gridSize) % gridSize;
+      const iz = Math.floor(idx / (gridSize * gridSize));
 
-    // Octant filtering
+      const t1 = thetaMin + (ix / (gridSize - 1)) * thetaSpan;
+      const t2 = thetaMin + (iy / (gridSize - 1)) * thetaSpan;
+      const t3 = thetaMin + (iz / (gridSize - 1)) * thetaSpan;
+
+      if (xEn && Math.abs(t1 - xVal) > sliceThickness) visible = false;
+      if (visible && yEn && Math.abs(t2 - yVal) > sliceThickness) visible = false;
+      if (visible && zEn && Math.abs(t3 - zVal) > sliceThickness) visible = false;
+    }
+
+    // Octant filtering (works for both realms using position coordinates)
     if (visible) {
-      const nx = state.positions[idx * 3 + 0];
-      const ny = state.positions[idx * 3 + 1];
-      const nz = state.positions[idx * 3 + 2];
+      const nx = positions[idx * 3 + 0];
+      const ny = positions[idx * 3 + 1];
+      const nz = positions[idx * 3 + 2];
       const octantIndex = (nx >= 0 ? 0 : 4) + (ny >= 0 ? 0 : 2) + (nz >= 0 ? 0 : 1);
       if (!octantVisible[octantIndex]) visible = false;
     }
 
+    // Time + stability filtering (shared)
     if (visible) {
       if (stable) {
         visible = showStable;
@@ -1126,7 +1229,7 @@ function applyFilters() {
   }
 
   colorAttr.needsUpdate = true;
-  updateStats(showing, n3, totalFlipped);
+  updateStats(showing, totalPoints, totalFlipped);
 }
 
 function updateStats(showing, total, totalFlipped) {
@@ -1139,6 +1242,7 @@ function updateStats(showing, total, totalFlipped) {
 // ─── Dataset switching ───────────────────────────────────────────────────────
 
 async function reloadDataset() {
+  const realm = document.getElementById('realm-select').value;
   const backend = document.getElementById('backend-select').value;
   const select = document.getElementById('resolution-select');
   const selectedLabel = select.options[select.selectedIndex]?.textContent || '';
@@ -1146,13 +1250,15 @@ async function reloadDataset() {
   const loading = document.getElementById('loading');
   loading.style.display = 'flex';
   loading.classList.remove('hidden');
-  document.getElementById('loading-text').textContent = `Loading ${backend.toUpperCase()} ${selectedLabel} data...`;
+  document.getElementById('loading-text').textContent = `Loading ${realm} ${backend.toUpperCase()} ${selectedLabel} data...`;
   document.getElementById('demo-badge').style.display = 'none';
 
   await new Promise(r => setTimeout(r, 50));
 
   const data = await loadData();
   buildPointCloud(data);
+  updateRealmOverlay();
+  resetView();
   initSliders();
   const adaptive = computeAdaptiveTimeFilter();
   if (adaptive) applyTimeFilter(adaptive.minSeconds, adaptive.maxSeconds);
@@ -1162,9 +1268,31 @@ async function reloadDataset() {
   setTimeout(() => { loading.style.display = 'none'; }, 500);
 }
 
+function changeRealm() {
+  const realm = document.getElementById('realm-select').value;
+  const backendSelect = document.getElementById('backend-select');
+
+  // Sphere only has GPU; cube has CPU + GPU.
+  if (realm === 'sphere') {
+    backendSelect.value = 'gpu';
+    backendSelect.querySelector('option[value="cpu"]').disabled = true;
+  } else {
+    backendSelect.querySelector('option[value="cpu"]').disabled = false;
+  }
+
+  // Toggle realm-specific controls
+  document.getElementById('cube-slice-controls').style.display = realm === 'cube' ? '' : 'none';
+  document.getElementById('sphere-slice-controls').style.display = realm === 'sphere' ? '' : 'none';
+
+  const backend = backendSelect.value;
+  populateResolutionSelect(realm, backend);
+  reloadDataset();
+}
+
 function changeBackend() {
+  const realm = document.getElementById('realm-select').value;
   const backend = document.getElementById('backend-select').value;
-  populateResolutionSelect(backend);
+  populateResolutionSelect(realm, backend);
   reloadDataset();
 }
 
@@ -1278,8 +1406,45 @@ function toggleAxes() {
   if (state.axesHelper) state.axesHelper.visible = document.getElementById('show-axes').checked;
 }
 
+function updateRealmOverlay() {
+  // Remove existing overlay
+  if (state.realmOverlay) {
+    state.scene.remove(state.realmOverlay);
+    state.realmOverlay.geometry.dispose();
+    state.realmOverlay.material.dispose();
+    state.realmOverlay = null;
+  }
+  if (state.realm === 'sphere') {
+    const sphereGeo = new THREE.SphereGeometry(1, 32, 24);
+    const sphereMat = new THREE.MeshBasicMaterial({
+      color: 0x00f0ff,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.08,
+    });
+    state.realmOverlay = new THREE.Mesh(sphereGeo, sphereMat);
+    state.scene.add(state.realmOverlay);
+  }
+}
+
+function updateShellLabel() {
+  const val = parseInt(document.getElementById('shell-radius').value);
+  document.getElementById('shell-radius-val').textContent = val + '\u00B0';
+  applyFilters();
+}
+
+function updateShellThicknessLabel() {
+  const val = parseInt(document.getElementById('shell-thickness').value);
+  document.getElementById('shell-thickness-val').textContent = val + '\u00B0';
+  applyFilters();
+}
+
 function resetView() {
-  state.camera.position.set(2.2, 1.6, 2.2);
+  if (state.realm === 'sphere') {
+    state.camera.position.set(1.8, 1.3, 1.8);
+  } else {
+    state.camera.position.set(2.2, 1.6, 2.2);
+  }
   state.controls.target.set(0, 0, 0);
   state.controls.update();
 }
@@ -1294,12 +1459,15 @@ window.updateOpacity = updateOpacity;
 window.updateTimeFilter = updateTimeFilter;
 window.updateSliceThickness = updateSliceThickness;
 window.updateSliceLabel = updateSliceLabel;
+window.updateShellLabel = updateShellLabel;
+window.updateShellThicknessLabel = updateShellThicknessLabel;
 window.applyFilters = applyFilters;
 window.togglePanel = togglePanel;
 window.showAllOctants = showAllOctants;
 window.hideAllOctants = hideAllOctants;
 window.changeColormap = changeColormap;
 window.toggleInvertColormap = toggleInvertColormap;
+window.changeRealm = changeRealm;
 window.changeBackend = changeBackend;
 window.changeResolution = changeResolution;
 
@@ -1339,6 +1507,16 @@ function applyConfig() {
   const disp = CONFIG.display || {};
 
   // Dataset
+  if (d.realm) {
+    document.getElementById('realm-select').value = d.realm;
+    // Toggle realm-specific controls
+    const realm = d.realm;
+    document.getElementById('cube-slice-controls').style.display = realm === 'cube' ? '' : 'none';
+    document.getElementById('sphere-slice-controls').style.display = realm === 'sphere' ? '' : 'none';
+    if (realm === 'sphere') {
+      document.getElementById('backend-select').querySelector('option[value="cpu"]').disabled = true;
+    }
+  }
   if (d.backend) document.getElementById('backend-select').value = d.backend;
 
   // Rendering controls
@@ -1446,9 +1624,12 @@ async function main() {
   drawLegend();
 
   const defaultResolution = CONFIG?.dataset?.defaultResolution || null;
-  populateResolutionSelect(document.getElementById('backend-select').value, defaultResolution);
+  const initialRealm = document.getElementById('realm-select').value;
+  const initialBackend = document.getElementById('backend-select').value;
+  populateResolutionSelect(initialRealm, initialBackend, defaultResolution);
   const data = await loadData();
   buildPointCloud(data);
+  updateRealmOverlay();
   applyConfigToMaterial();
   applyConfigTimeFilter();
   applyFilters();

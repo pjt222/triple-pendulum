@@ -3,12 +3,23 @@
 Builds uniform grids of (theta1, theta2, theta3) initial angles spanning
 the configured range. The default range of +/-170 degrees avoids the
 singularity at +/-180 degrees where the mass matrix becomes degenerate.
+
+Two grid types are supported:
+
+* **Cube** -- uniform Cartesian grid in (theta1, theta2, theta3) space.
+* **Sphere** -- concentric spherical shells with Fibonacci spiral sampling,
+  inscribed in the cube with radius r_max = 170 degrees.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import numpy.typing as npt
+
+# Golden ratio, used by the Fibonacci sphere algorithm.
+_GOLDEN_RATIO = (1.0 + np.sqrt(5.0)) / 2.0
 
 
 def make_grid(
@@ -157,3 +168,137 @@ def make_grid_3d(
     )
     volume = np.stack([theta1_grid, theta2_grid, theta3_grid], axis=-1)
     return volume
+
+
+# ---------------------------------------------------------------------------
+# Sphere grid  (Issue #65)
+# ---------------------------------------------------------------------------
+
+
+def fibonacci_sphere(
+    num_points: int,
+) -> npt.NDArray[np.float64]:
+    """Generate quasi-uniform points on the unit sphere using the Fibonacci spiral.
+
+    The golden-angle spiral distributes points with near-uniform spacing,
+    avoiding the polar clustering that plagues latitude/longitude grids.
+
+    Parameters
+    ----------
+    num_points : int
+        Number of points to place on the unit sphere.  Must be >= 1.
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape ``(num_points, 3)`` with Cartesian ``(x, y, z)``
+        coordinates on the unit sphere.
+    """
+    indices = np.arange(num_points, dtype=np.float64)
+
+    # Polar angle (colatitude): uniformly spaced in cos(phi) to avoid
+    # pole clustering.  The +0.5 offset centres each point in its band.
+    phi = np.arccos(1.0 - 2.0 * (indices + 0.5) / num_points)
+
+    # Azimuthal angle: golden-angle increments produce the spiral.
+    theta_azimuthal = 2.0 * np.pi * indices / _GOLDEN_RATIO
+
+    sin_phi = np.sin(phi)
+    x = sin_phi * np.cos(theta_azimuthal)
+    y = sin_phi * np.sin(theta_azimuthal)
+    z = np.cos(phi)
+
+    return np.column_stack([x, y, z])
+
+
+def make_sphere_grid(
+    resolution: int,
+    r_max: float = 170.0,
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], dict[str, Any]]:
+    """Create a solid-sphere grid of initial-angle triplets.
+
+    The sphere is built from concentric shells of Fibonacci-spiral points.
+    The number of points per shell scales as ``(r / r_max)**2`` to maintain
+    uniform volume density.  The total point count is approximately
+    ``(pi/6) * resolution**3``, matching the volume ratio of an inscribed
+    sphere to its bounding cube.
+
+    Parameters
+    ----------
+    resolution : int
+        Number of radial shells (excluding the origin).  Also controls
+        point density: higher resolution = more shells and more points
+        per shell.
+    r_max : float
+        Maximum radius in degrees (default 170).  No individual angle
+        component will exceed this value since ``|sin * cos| <= 1``
+        and the radius caps at *r_max*.
+
+    Returns
+    -------
+    thetas : np.ndarray
+        Array of shape ``(M, 3)`` with ``(theta1, theta2, theta3)`` in
+        degrees — the physical initial conditions for simulation.
+    positions : np.ndarray
+        Array of shape ``(M, 3)`` with viewer coordinates normalised to
+        ``[-1, 1]``.  These are the Cartesian coordinates of each point
+        scaled so the outermost shell sits at unit radius.
+    metadata : dict
+        Grid metadata including ``grid_type``, ``resolution``, ``r_max``,
+        ``num_shells``, ``total_points``, ``shell_radii``, and
+        ``points_per_shell``.
+    """
+    # Calibrate so total points ~ (pi/6) * resolution^3.
+    #
+    # Total = 1 + sum_{k=1}^{N} points_per_full_shell * (k/N)^2
+    #       ~ points_per_full_shell * N / 3   (integral approximation)
+    #
+    # Set this equal to (pi/6) * N^3:
+    #   points_per_full_shell * N / 3 = (pi/6) * N^3
+    #   points_per_full_shell = (pi/2) * N^2
+    points_per_full_shell = int(np.round((np.pi / 2.0) * resolution ** 2))
+
+    r_step = r_max / resolution
+
+    # Origin: single degenerate point at (0, 0, 0).
+    all_thetas = [np.zeros((1, 3))]
+    all_positions = [np.zeros((1, 3))]
+
+    shell_radii: list[float] = []
+    points_per_shell: list[int] = []
+
+    for shell_index in range(1, resolution + 1):
+        radius = shell_index * r_step
+        shell_fraction = shell_index / resolution
+
+        # Number of points on this shell (quadratic scaling for volume density).
+        num_shell_points = max(1, int(np.round(
+            points_per_full_shell * shell_fraction ** 2
+        )))
+
+        # Fibonacci points on unit sphere, scaled to this shell's radius.
+        unit_points = fibonacci_sphere(num_shell_points)
+        shell_thetas = unit_points * radius          # degrees
+        shell_positions = unit_points * shell_fraction  # normalised to [-1, 1]
+
+        all_thetas.append(shell_thetas)
+        all_positions.append(shell_positions)
+        shell_radii.append(float(radius))
+        points_per_shell.append(num_shell_points)
+
+    thetas = np.vstack(all_thetas)
+    positions = np.vstack(all_positions)
+
+    total_points = thetas.shape[0]
+
+    metadata: dict[str, Any] = {
+        "grid_type": "sphere",
+        "resolution": resolution,
+        "r_max": float(r_max),
+        "num_shells": resolution,
+        "total_points": total_points,
+        "shell_radii": shell_radii,
+        "points_per_shell": points_per_shell,
+    }
+
+    return thetas, positions, metadata

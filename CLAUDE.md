@@ -45,15 +45,30 @@ src/
 - **Volume rendering:** Vispy or Blender volumetric
 - **Animation:** Manim (optional)
 
+## Realms
+
+Two grid types (realms) for sampling initial conditions:
+
+- **Cube** (default): Uniform Cartesian grid in (θ₁, θ₂, θ₃) space. N³ total points.
+- **Sphere**: Concentric Fibonacci-spiral shells inscribed in the cube (r_max = 170°). ~(π/6)·N³ total points (~48% fewer). Enables radial chaos transition mapping and directional asymmetry analysis.
+
+Sphere grid uses explicit `positions` array in JSON (avoids duplicating Fibonacci algorithm in JS). The simulation kernel is grid-agnostic — it receives (N, 3) initial angles regardless of realm.
+
 ## Commands
 
 ```bash
 # CPU simulation (~2 min for 40³ grid)
 python triple_pendulum_sim.py
 
+# GPU simulation (cube realm)
+python3 run_gpu_simulations.py --resolutions 20 40 100
+
+# GPU simulation (sphere realm)
+python3 run_gpu_simulations.py --realm sphere --resolutions 20 40 100
+
 # Serve the interactive viewer
-python -m http.server 8000
-# then open http://localhost:8000/triple_pendulum_viz.html
+python3 -m http.server 8000 --directory docs
+# then open http://localhost:8000/
 ```
 
 ## Key Design Constraints
@@ -62,3 +77,4 @@ python -m http.server 8000
 - The additive-blending point cloud in the viewer naturally highlights fractal boundaries.
 - Slice controls (fix one θ axis) give 2D cross-sections for exploration.
 - Target resolution: 200³ = 8M voxels (GPU), up from 40³ = 64K (CPU prototype).
+- Sphere realm: `positions` array stores explicit point coordinates to avoid JS-side Fibonacci reimplementation; size overhead is offset by ~48% fewer points.

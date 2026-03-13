@@ -5,12 +5,17 @@ Iterates through resolutions [20, 30, 40, ..., 200, 300, ..., 1000], runs the
 CUDA kernel for each, and saves results as JSON to data/. Optionally copies
 results to a Hugging Face Space checkout via --hf-space-dir.
 
+Supports two realms:
+* **cube** (default) -- uniform Cartesian grid, N^3 total points.
+* **sphere** -- Fibonacci-spiral shells, ~(pi/6)*N^3 total points.
+
 Small resolutions (<=600^3) use single-launch simulation and direct JSON output.
 Large resolutions (>=700^3) use chunked simulation with memmap output, then
 downsample to 200^3 JSON for the web viewer.
 
 Usage:
     python3 run_gpu_simulations.py
+    python3 run_gpu_simulations.py --realm sphere --resolutions 20 30 40
     python3 run_gpu_simulations.py --resolutions 300 400 500
     python3 run_gpu_simulations.py --resolutions 700 800 900 1000
     python3 run_gpu_simulations.py --start-from 300
@@ -26,7 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from src.simulation.cuda_sim import HAS_CUPY, HAS_PYCUDA, HAS_TORCH
-from src.utils.grid import make_grid
+from src.utils.grid import make_grid, make_sphere_grid
 from src.utils.io import save_results_json
 
 ALL_RESOLUTIONS = list(range(20, 210, 10))  # [20, 30, 40, ..., 200]
@@ -64,12 +69,21 @@ def format_count(number):
 
 
 def run_single_resolution(
-    resolution, simulate_fn, data_directory, hf_data_directory, dt, t_max, log
+    resolution, simulate_fn, data_directory, hf_data_directory, dt, t_max, log,
+    realm="cube",
 ):
     """Run a single resolution using the single-launch path (<=600^3)."""
-    num_pendulums = resolution ** 3
-
-    grid = make_grid(resolution)
+    # Build initial conditions for the chosen realm.
+    if realm == "sphere":
+        grid, sphere_positions, sphere_meta = make_sphere_grid(resolution)
+        num_pendulums = sphere_meta["total_points"]
+        log(f"Sphere grid: {num_pendulums:,} points across "
+            f"{sphere_meta['num_shells']} shells")
+    else:
+        grid = make_grid(resolution)
+        num_pendulums = resolution ** 3
+        sphere_positions = None
+        sphere_meta = None
 
     per_resolution_log = str(data_directory / f"sim_cuda_{resolution}.log")
 
@@ -83,7 +97,10 @@ def run_single_resolution(
     fraction_flipped = metadata["fraction_flipped"]
 
     # Save JSON to data/
-    json_filename = f"simulation_{resolution}_gpu.json"
+    if realm == "sphere":
+        json_filename = f"simulation_{resolution}_sphere_gpu.json"
+    else:
+        json_filename = f"simulation_{resolution}_gpu.json"
     json_path = data_directory / json_filename
 
     save_results_json(
@@ -92,11 +109,15 @@ def run_single_resolution(
         theta_range=(-170.0, 170.0),
         flip_times=flip_times,
         metadata=metadata,
+        grid_type=realm,
+        positions=sphere_positions,
+        grid_params=sphere_meta,
     )
 
     file_size_mb = json_path.stat().st_size / (1024 * 1024)
 
-    log(f"Resolution {resolution}^3: "
+    realm_label = f"Sphere {resolution}" if realm == "sphere" else f"{resolution}^3"
+    log(f"{realm_label}: "
         f"{format_count(num_pendulums)} pendulums, "
         f"{wall_time:.2f}s, {fraction_flipped:.1%} flipped, "
         f"{file_size_mb:.1f}MB")
@@ -190,6 +211,10 @@ def main():
         "--hf-space-dir", type=str, default=None,
         help="Path to HF Space checkout; copies results to <dir>/data/",
     )
+    parser.add_argument(
+        "--realm", type=str, choices=["cube", "sphere"], default="cube",
+        help="Grid type: 'cube' (default) or 'sphere' (Fibonacci shells)",
+    )
     args = parser.parse_args()
 
     # Determine which resolutions to run
@@ -222,39 +247,58 @@ def main():
         master_log.flush()
 
     try:
+        realm = args.realm
+
         if args.dry_run:
-            log(f"DRY RUN -- would run {len(resolutions)} resolutions: "
-                f"{resolutions}")
-            total_pendulums = sum(r ** 3 for r in resolutions)
-            log(f"Total pendulums: {format_count(total_pendulums)}")
+            log(f"DRY RUN -- realm={realm}, "
+                f"would run {len(resolutions)} resolutions: {resolutions}")
             for resolution in resolutions:
-                count = resolution ** 3
-                mode = "chunked" if resolution > CHUNKED_THRESHOLD else "single"
+                if realm == "sphere":
+                    _, _, sphere_meta = make_sphere_grid(resolution)
+                    count = sphere_meta["total_points"]
+                    label = f"  Sphere {resolution}"
+                else:
+                    count = resolution ** 3
+                    label = f"  {resolution}^3"
+                mode = "chunked" if realm == "cube" and resolution > CHUNKED_THRESHOLD else "single"
                 ram_gb = count * 3 * 8 / (1024 ** 3)
                 vram_gb = count * 32 / (1024 ** 3)
-                log(f"  {resolution}^3 = {format_count(count)} pendulums "
+                log(f"{label} = {format_count(count)} pendulums "
                     f"[{mode}] RAM={ram_gb:.1f}GB VRAM={vram_gb:.1f}GB")
+            total_pendulums = sum(
+                make_sphere_grid(r)[2]["total_points"] if realm == "sphere" else r ** 3
+                for r in resolutions
+            )
+            log(f"Total pendulums: {format_count(total_pendulums)}")
             return
 
         simulate_fn, backend_name = get_backend()
         log(f"Backend: {backend_name}")
+        log(f"Realm: {realm}")
         log(f"Running {len(resolutions)} resolutions: {resolutions}")
         log(f"Parameters: dt={args.dt}, t_max={args.t_max}")
-        log(f"Chunked threshold: >{CHUNKED_THRESHOLD}^3")
+        if realm == "cube":
+            log(f"Chunked threshold: >{CHUNKED_THRESHOLD}^3")
 
         total_run_start = time.monotonic()
         total_pendulums_simulated = 0
 
         for run_index, resolution in enumerate(resolutions):
-            num_pendulums = resolution ** 3
+            if realm == "sphere":
+                # Estimate point count for logging (actual count computed in run_single_resolution).
+                estimated_points = int(np.round((np.pi / 6) * resolution ** 3))
+                num_pendulums = estimated_points
+            else:
+                num_pendulums = resolution ** 3
             total_pendulums_simulated += num_pendulums
 
             log("=" * 60)
-            log(f"Resolution {resolution}^3: "
-                f"{format_count(num_pendulums)} pendulums "
+            realm_label = f"Sphere {resolution}" if realm == "sphere" else f"{resolution}^3"
+            log(f"{realm_label}: "
+                f"~{format_count(num_pendulums)} pendulums "
                 f"[{run_index + 1}/{len(resolutions)}]")
 
-            if resolution > CHUNKED_THRESHOLD:
+            if realm == "cube" and resolution > CHUNKED_THRESHOLD:
                 run_chunked_resolution(
                     resolution, data_directory, hf_data_directory,
                     args.dt, args.t_max, log,
@@ -263,6 +307,7 @@ def main():
                 run_single_resolution(
                     resolution, simulate_fn, data_directory, hf_data_directory,
                     args.dt, args.t_max, log,
+                    realm=realm,
                 )
 
         total_elapsed = time.monotonic() - total_run_start

@@ -1,5 +1,6 @@
 {
   "dataset": {
+    "realm": "cube",
     "backend": "gpu",
     "defaultResolution": 200
   },
