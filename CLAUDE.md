@@ -66,8 +66,8 @@ python3 run_gpu_simulations.py --resolutions 20 40 100
 # GPU simulation (sphere realm)
 python3 run_gpu_simulations.py --realm sphere --resolutions 20 40 100
 
-# Serve the interactive viewer
-python3 -m http.server 8000 --directory docs
+# Serve the interactive viewer locally
+python3 serve.py
 # then open http://localhost:8000/
 ```
 
