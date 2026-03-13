@@ -780,6 +780,8 @@ const DATA_BASE_URL = window.location.hostname.endsWith('.hf.space')
   : 'data/';
 
 // Dataset manifest: realm -> backend -> [{resolution, file, label, totalPoints?}]
+// GPU datasets use binary format (.bin + .meta.json) for fast loading.
+// CPU datasets remain JSON for backward compatibility.
 const DATASETS = {
   cube: {
     cpu: [
@@ -788,56 +790,56 @@ const DATASETS = {
     ],
     gpu: [
       // Downsampled entries — uncomment as simulations complete:
-      // { resolution: 200, file: 'simulation_1000_ds200_gpu.json', label: '1000\u00B3 \u2192 200\u00B3 (1.0B src)' },
-      // { resolution: 200, file: 'simulation_900_ds200_gpu.json', label: '900\u00B3 \u2192 200\u00B3 (729M src)' },
-      // { resolution: 200, file: 'simulation_800_ds200_gpu.json', label: '800\u00B3 \u2192 200\u00B3 (512M src)' },
-      // { resolution: 200, file: 'simulation_700_ds200_gpu.json', label: '700\u00B3 \u2192 200\u00B3 (343M src)' },
-      { resolution: 600, file: 'simulation_600_gpu.json', label: '600\u00B3 (216M pts)' },
-      { resolution: 500, file: 'simulation_500_gpu.json', label: '500\u00B3 (125M pts)' },
-      { resolution: 400, file: 'simulation_400_gpu.json', label: '400\u00B3 (64M pts)' },
-      { resolution: 300, file: 'simulation_300_gpu.json', label: '300\u00B3 (27M pts)' },
-      { resolution: 200, file: 'simulation_200_gpu.json', label: '200\u00B3 (8.0M pts)' },
-      { resolution: 190, file: 'simulation_190_gpu.json', label: '190\u00B3 (6.9M pts)' },
-      { resolution: 180, file: 'simulation_180_gpu.json', label: '180\u00B3 (5.8M pts)' },
-      { resolution: 170, file: 'simulation_170_gpu.json', label: '170\u00B3 (4.9M pts)' },
-      { resolution: 160, file: 'simulation_160_gpu.json', label: '160\u00B3 (4.1M pts)' },
-      { resolution: 150, file: 'simulation_150_gpu.json', label: '150\u00B3 (3.4M pts)' },
-      { resolution: 140, file: 'simulation_140_gpu.json', label: '140\u00B3 (2.7M pts)' },
-      { resolution: 130, file: 'simulation_130_gpu.json', label: '130\u00B3 (2.2M pts)' },
-      { resolution: 120, file: 'simulation_120_gpu.json', label: '120\u00B3 (1.7M pts)' },
-      { resolution: 110, file: 'simulation_110_gpu.json', label: '110\u00B3 (1.3M pts)' },
-      { resolution: 100, file: 'simulation_100_gpu.json', label: '100\u00B3 (1.0M pts)' },
-      { resolution: 90, file: 'simulation_90_gpu.json', label: '90\u00B3 (729K pts)' },
-      { resolution: 80, file: 'simulation_80_gpu.json', label: '80\u00B3 (512K pts)' },
-      { resolution: 70, file: 'simulation_70_gpu.json', label: '70\u00B3 (343K pts)' },
-      { resolution: 60, file: 'simulation_60_gpu.json', label: '60\u00B3 (216K pts)' },
-      { resolution: 50, file: 'simulation_50_gpu.json', label: '50\u00B3 (125K pts)' },
-      { resolution: 40, file: 'simulation_40_gpu.json', label: '40\u00B3 (64K pts)' },
-      { resolution: 30, file: 'simulation_30_gpu.json', label: '30\u00B3 (27K pts)' },
-      { resolution: 20, file: 'simulation_20_gpu.json', label: '20\u00B3 (8K pts)' },
+      // { resolution: 200, file: 'simulation_1000_ds200_gpu.bin', label: '1000\u00B3 \u2192 200\u00B3 (1.0B src)' },
+      // { resolution: 200, file: 'simulation_900_ds200_gpu.bin', label: '900\u00B3 \u2192 200\u00B3 (729M src)' },
+      // { resolution: 200, file: 'simulation_800_ds200_gpu.bin', label: '800\u00B3 \u2192 200\u00B3 (512M src)' },
+      // { resolution: 200, file: 'simulation_700_ds200_gpu.bin', label: '700\u00B3 \u2192 200\u00B3 (343M src)' },
+      { resolution: 600, file: 'simulation_600_gpu.bin', label: '600\u00B3 (216M pts)' },
+      { resolution: 500, file: 'simulation_500_gpu.bin', label: '500\u00B3 (125M pts)' },
+      { resolution: 400, file: 'simulation_400_gpu.bin', label: '400\u00B3 (64M pts)' },
+      { resolution: 300, file: 'simulation_300_gpu.bin', label: '300\u00B3 (27M pts)' },
+      { resolution: 200, file: 'simulation_200_gpu.bin', label: '200\u00B3 (8.0M pts)' },
+      { resolution: 190, file: 'simulation_190_gpu.bin', label: '190\u00B3 (6.9M pts)' },
+      { resolution: 180, file: 'simulation_180_gpu.bin', label: '180\u00B3 (5.8M pts)' },
+      { resolution: 170, file: 'simulation_170_gpu.bin', label: '170\u00B3 (4.9M pts)' },
+      { resolution: 160, file: 'simulation_160_gpu.bin', label: '160\u00B3 (4.1M pts)' },
+      { resolution: 150, file: 'simulation_150_gpu.bin', label: '150\u00B3 (3.4M pts)' },
+      { resolution: 140, file: 'simulation_140_gpu.bin', label: '140\u00B3 (2.7M pts)' },
+      { resolution: 130, file: 'simulation_130_gpu.bin', label: '130\u00B3 (2.2M pts)' },
+      { resolution: 120, file: 'simulation_120_gpu.bin', label: '120\u00B3 (1.7M pts)' },
+      { resolution: 110, file: 'simulation_110_gpu.bin', label: '110\u00B3 (1.3M pts)' },
+      { resolution: 100, file: 'simulation_100_gpu.bin', label: '100\u00B3 (1.0M pts)' },
+      { resolution: 90, file: 'simulation_90_gpu.bin', label: '90\u00B3 (729K pts)' },
+      { resolution: 80, file: 'simulation_80_gpu.bin', label: '80\u00B3 (512K pts)' },
+      { resolution: 70, file: 'simulation_70_gpu.bin', label: '70\u00B3 (343K pts)' },
+      { resolution: 60, file: 'simulation_60_gpu.bin', label: '60\u00B3 (216K pts)' },
+      { resolution: 50, file: 'simulation_50_gpu.bin', label: '50\u00B3 (125K pts)' },
+      { resolution: 40, file: 'simulation_40_gpu.bin', label: '40\u00B3 (64K pts)' },
+      { resolution: 30, file: 'simulation_30_gpu.bin', label: '30\u00B3 (27K pts)' },
+      { resolution: 20, file: 'simulation_20_gpu.bin', label: '20\u00B3 (8K pts)' },
     ],
   },
   sphere: {
     gpu: [
-      { resolution: 200, file: 'simulation_200_sphere_gpu.json', label: 'Sphere 200 (~4.2M pts)', totalPoints: 4220273 },
-      { resolution: 190, file: 'simulation_190_sphere_gpu.json', label: 'Sphere 190 (~3.6M pts)', totalPoints: 3619788 },
-      { resolution: 180, file: 'simulation_180_sphere_gpu.json', label: 'Sphere 180 (~3.1M pts)', totalPoints: 3079141 },
-      { resolution: 170, file: 'simulation_170_sphere_gpu.json', label: 'Sphere 170 (~2.6M pts)', totalPoints: 2595185 },
-      { resolution: 160, file: 'simulation_160_sphere_gpu.json', label: 'Sphere 160 (~2.2M pts)', totalPoints: 2164783 },
-      { resolution: 150, file: 'simulation_150_sphere_gpu.json', label: 'Sphere 150 (~1.8M pts)', totalPoints: 1784864 },
-      { resolution: 140, file: 'simulation_140_sphere_gpu.json', label: 'Sphere 140 (~1.5M pts)', totalPoints: 1452207 },
-      { resolution: 130, file: 'simulation_130_sphere_gpu.json', label: 'Sphere 130 (~1.2M pts)', totalPoints: 1163629 },
-      { resolution: 120, file: 'simulation_120_sphere_gpu.json', label: 'Sphere 120 (~916K pts)', totalPoints: 916099 },
-      { resolution: 110, file: 'simulation_110_sphere_gpu.json', label: 'Sphere 110 (~706K pts)', totalPoints: 706459 },
-      { resolution: 100, file: 'simulation_100_sphere_gpu.json', label: 'Sphere 100 (~531K pts)', totalPoints: 531479 },
-      { resolution: 90, file: 'simulation_90_sphere_gpu.json', label: 'Sphere 90 (~388K pts)', totalPoints: 388074 },
-      { resolution: 80, file: 'simulation_80_sphere_gpu.json', label: 'Sphere 80 (~273K pts)', totalPoints: 273126 },
-      { resolution: 70, file: 'simulation_70_sphere_gpu.json', label: 'Sphere 70 (~183K pts)', totalPoints: 183465 },
-      { resolution: 60, file: 'simulation_60_sphere_gpu.json', label: 'Sphere 60 (~116K pts)', totalPoints: 115945 },
-      { resolution: 50, file: 'simulation_50_sphere_gpu.json', label: 'Sphere 50 (~67K pts)', totalPoints: 67427 },
-      { resolution: 40, file: 'simulation_40_sphere_gpu.json', label: 'Sphere 40 (~35K pts)', totalPoints: 34775 },
-      { resolution: 30, file: 'simulation_30_sphere_gpu.json', label: 'Sphere 30 (~15K pts)', totalPoints: 14855 },
-      { resolution: 20, file: 'simulation_20_sphere_gpu.json', label: 'Sphere 20 (~5K pts)', totalPoints: 4507 },
+      { resolution: 200, file: 'simulation_200_sphere_gpu.bin', label: 'Sphere 200 (~4.2M pts)', totalPoints: 4220273 },
+      { resolution: 190, file: 'simulation_190_sphere_gpu.bin', label: 'Sphere 190 (~3.6M pts)', totalPoints: 3619788 },
+      { resolution: 180, file: 'simulation_180_sphere_gpu.bin', label: 'Sphere 180 (~3.1M pts)', totalPoints: 3079141 },
+      { resolution: 170, file: 'simulation_170_sphere_gpu.bin', label: 'Sphere 170 (~2.6M pts)', totalPoints: 2595185 },
+      { resolution: 160, file: 'simulation_160_sphere_gpu.bin', label: 'Sphere 160 (~2.2M pts)', totalPoints: 2164783 },
+      { resolution: 150, file: 'simulation_150_sphere_gpu.bin', label: 'Sphere 150 (~1.8M pts)', totalPoints: 1784864 },
+      { resolution: 140, file: 'simulation_140_sphere_gpu.bin', label: 'Sphere 140 (~1.5M pts)', totalPoints: 1452207 },
+      { resolution: 130, file: 'simulation_130_sphere_gpu.bin', label: 'Sphere 130 (~1.2M pts)', totalPoints: 1163629 },
+      { resolution: 120, file: 'simulation_120_sphere_gpu.bin', label: 'Sphere 120 (~916K pts)', totalPoints: 916099 },
+      { resolution: 110, file: 'simulation_110_sphere_gpu.bin', label: 'Sphere 110 (~706K pts)', totalPoints: 706459 },
+      { resolution: 100, file: 'simulation_100_sphere_gpu.bin', label: 'Sphere 100 (~531K pts)', totalPoints: 531479 },
+      { resolution: 90, file: 'simulation_90_sphere_gpu.bin', label: 'Sphere 90 (~388K pts)', totalPoints: 388074 },
+      { resolution: 80, file: 'simulation_80_sphere_gpu.bin', label: 'Sphere 80 (~273K pts)', totalPoints: 273126 },
+      { resolution: 70, file: 'simulation_70_sphere_gpu.bin', label: 'Sphere 70 (~183K pts)', totalPoints: 183465 },
+      { resolution: 60, file: 'simulation_60_sphere_gpu.bin', label: 'Sphere 60 (~116K pts)', totalPoints: 115945 },
+      { resolution: 50, file: 'simulation_50_sphere_gpu.bin', label: 'Sphere 50 (~67K pts)', totalPoints: 67427 },
+      { resolution: 40, file: 'simulation_40_sphere_gpu.bin', label: 'Sphere 40 (~35K pts)', totalPoints: 34775 },
+      { resolution: 30, file: 'simulation_30_sphere_gpu.bin', label: 'Sphere 30 (~15K pts)', totalPoints: 14855 },
+      { resolution: 20, file: 'simulation_20_sphere_gpu.bin', label: 'Sphere 20 (~5K pts)', totalPoints: 4507 },
     ],
   },
 };
@@ -898,11 +900,28 @@ async function loadData() {
     return generateDemoData(20);
   }
 
+  const isBinary = dataPath.endsWith('.bin');
+
   try {
     const loadingText = document.getElementById('loading-text');
     if (resolution >= 200) {
       loadingText.textContent += ' (large file, please wait...)';
     }
+
+    if (isBinary) {
+      try {
+        return await loadBinaryData(dataPath);
+      } catch (binErr) {
+        // Fall back to JSON if binary not available (e.g. local dev).
+        console.warn('Binary load failed, trying JSON fallback:', binErr.message);
+        const jsonPath = dataPath.replace(/\.bin$/, '.json');
+        const res = await fetch(jsonPath);
+        if (!res.ok) throw new Error(`JSON fallback HTTP ${res.status}`);
+        const json = await res.json();
+        return parseSimData(json);
+      }
+    }
+
     const res = await fetch(dataPath);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
@@ -913,6 +932,47 @@ async function loadData() {
     document.getElementById('loading-text').textContent = 'Generating demo data...';
     return generateDemoData(20);
   }
+}
+
+async function loadBinaryData(binPath) {
+  // Fetch the raw binary data and the metadata sidecar in parallel.
+  const metaPath = binPath + '.meta.json';
+  const [binRes, metaRes] = await Promise.all([
+    fetch(binPath),
+    fetch(metaPath),
+  ]);
+  if (!binRes.ok) throw new Error(`Binary HTTP ${binRes.status}`);
+  if (!metaRes.ok) throw new Error(`Meta HTTP ${metaRes.status}`);
+
+  const [arrayBuffer, meta] = await Promise.all([
+    binRes.arrayBuffer(),
+    metaRes.json(),
+  ]);
+
+  // Wrap the ArrayBuffer directly as Float32Array — zero parsing.
+  const flipTimes = new Float32Array(arrayBuffer);
+
+  const gridType = meta.grid_type || 'cube';
+  const gridSize = meta.grid_size;
+  const thetaRange = meta.theta_range || [-170, 170];
+  const totalPoints = flipTimes.length;
+
+  // Find tMax from the data.
+  let tMax = 0;
+  for (let i = 0; i < totalPoints; i++) {
+    const v = flipTimes[i];
+    if (isFinite(v) && v > tMax) tMax = v;
+  }
+
+  return {
+    gridType,
+    gridSize,
+    gridParams: meta.grid_params || null,
+    thetaRange,
+    flipTimes,
+    tMax,
+    explicitPositions: null,  // Binary format omits positions; viewer reconstructs.
+  };
 }
 
 function parseSimData(json) {
@@ -1056,6 +1116,35 @@ function computeColors() {
   }
 }
 
+// Reconstruct sphere viewer positions from grid_params (binary format).
+// Mirrors the Python make_sphere_grid() Fibonacci spiral algorithm.
+function reconstructSpherePositions(positions, gridParams) {
+  const resolution = gridParams.resolution || gridParams.num_shells;
+  const pointsPerShell = gridParams.points_per_shell;
+  const goldenRatio = (1.0 + Math.sqrt(5.0)) / 2.0;
+
+  // Origin: single point at (0, 0, 0) — already zero-initialized.
+  let offset = 1;
+
+  for (let shellIdx = 0; shellIdx < resolution; shellIdx++) {
+    const shellFraction = (shellIdx + 1) / resolution;
+    const numPoints = pointsPerShell[shellIdx];
+
+    for (let i = 0; i < numPoints; i++) {
+      // Fibonacci sphere: uniform spacing via golden angle.
+      const phi = Math.acos(1.0 - 2.0 * (i + 0.5) / numPoints);
+      const theta = 2.0 * Math.PI * i / goldenRatio;
+      const sinPhi = Math.sin(phi);
+
+      positions[(offset + i) * 3 + 0] = sinPhi * Math.cos(theta) * shellFraction;
+      positions[(offset + i) * 3 + 1] = sinPhi * Math.sin(theta) * shellFraction;
+      positions[(offset + i) * 3 + 2] = Math.cos(phi) * shellFraction;
+    }
+
+    offset += numPoints;
+  }
+}
+
 function buildPointCloud(data) {
   const { gridType, gridSize, gridParams, thetaRange, flipTimes, tMax, explicitPositions } = data;
   Object.assign(state, { gridSize, thetaRange, flipTimes, tMax });
@@ -1070,6 +1159,10 @@ function buildPointCloud(data) {
   if (explicitPositions) {
     // Sphere (or any grid with explicit positions): copy directly.
     positions.set(explicitPositions);
+  } else if (gridType === 'sphere' && gridParams) {
+    // Sphere without explicit positions (binary format): reconstruct
+    // from grid_params using the Fibonacci spiral algorithm.
+    reconstructSpherePositions(positions, gridParams);
   } else {
     // Cube: reconstruct positions from grid indices.
     for (let idx = 0; idx < totalPoints; idx++) {

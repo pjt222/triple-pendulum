@@ -3,8 +3,10 @@
 # Reads HF_TOKEN from .env file or environment.
 #
 # Usage:
-#   ./deploy_to_hf.sh                    # Upload viewer + all data
-#   ./deploy_to_hf.sh data/sim_700.json  # Upload a single data file
+#   ./deploy_to_hf.sh                            # Upload viewer + all data (JSON + binary)
+#   ./deploy_to_hf.sh data/sim_700.json          # Upload a single data file
+#   ./deploy_to_hf.sh data/sim_700.bin            # Upload a single binary file
+#   ./deploy_to_hf.sh data/sim_700.bin.meta.json  # Upload a single metadata file
 
 set -euo pipefail
 
@@ -75,6 +77,21 @@ else:
             allow_patterns=['simulation_*.json'],
         )
         print(f'  Uploaded {len(data_files)} files')
+
+    print('=== Uploading binary simulation data to Dataset ===')
+    bin_files = sorted(glob.glob('data/simulation_*.bin'))
+    meta_files = sorted(glob.glob('data/simulation_*.bin.meta.json'))
+    if bin_files:
+        api.upload_folder(
+            folder_path='data/',
+            path_in_repo='.',
+            repo_id=DATASET_ID,
+            repo_type='dataset',
+            allow_patterns=['simulation_*.bin', 'simulation_*.bin.meta.json'],
+        )
+        print(f'  Uploaded {len(bin_files)} binary + {len(meta_files)} meta files')
+    else:
+        print('  No binary data found in data/')
 
 print('Deploy complete!')
 " "$@"

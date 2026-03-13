@@ -1,8 +1,10 @@
 """Data I/O for triple pendulum simulation results.
 
-Supports three storage backends:
+Supports four storage backends:
 
 * **JSON** -- portable, human-readable; best for small grids (≤ 40³).
+* **Binary** -- raw little-endian Float32 with a JSON metadata sidecar;
+  designed for fast browser loading (zero-parse ``Float32Array`` wrapping).
 * **Memmap** -- NumPy memory-mapped files with a JSON metadata sidecar;
   ideal for large grids that do not fit in RAM.
 * **HDF5** -- compressed, self-describing datasets via *h5py*; suited for
@@ -154,6 +156,140 @@ def save_results_json(
 
         with open(output_path, "w", encoding="utf-8") as file_handle:
             json.dump(document, file_handle)
+
+
+def save_results_binary(
+    path: str | Path,
+    grid_size: int,
+    theta_range: tuple[float, float],
+    flip_times: npt.NDArray[np.float64],
+    metadata: dict[str, Any] | None = None,
+    *,
+    grid_type: str = "cube",
+    grid_params: dict[str, Any] | None = None,
+) -> None:
+    """Save simulation results as a raw binary file with a JSON sidecar.
+
+    Two files are created:
+
+    * ``{path}``  -- raw little-endian Float32 array of flip-time values.
+      ``NaN`` values are preserved natively via IEEE 754 representation.
+    * ``{path}.meta.json`` -- JSON metadata sidecar containing grid
+      parameters and simulation metadata.
+
+    This format is designed for fast browser-side loading: the viewer can
+    fetch the ``.bin`` file as an ``ArrayBuffer`` and wrap it directly in
+    a ``Float32Array`` with zero parsing overhead.
+
+    Parameters
+    ----------
+    path : str or Path
+        Destination file path.  Should end in ``.bin``.  Parent directories
+        are created if needed.  The metadata sidecar is written to
+        ``{path}.meta.json``.
+    grid_size : int
+        Number of sample points per axis (the "n" in an n**3 grid).
+        For sphere grids this is the number of radial shells.
+    theta_range : tuple of float
+        ``(theta_min, theta_max)`` in degrees.
+    flip_times : np.ndarray
+        Flip-time values as a 1-D array.  ``np.nan`` means the pendulum
+        never flipped during the simulation window.
+    metadata : dict, optional
+        Extra metadata to store in the sidecar.  Common keys:
+        ``dt``, ``t_max``, ``computation_time_seconds``, ``date``.
+        If *metadata* is provided but ``date`` is missing, the current
+        UTC timestamp (ISO 8601) is added automatically.  Counts for
+        ``total_points`` and ``total_flipped`` are always (re)computed
+        from *flip_times*.
+    grid_type : str
+        Either ``"cube"`` (default) or ``"sphere"``.  Stored in the
+        sidecar so the viewer knows how to reconstruct positions.
+    grid_params : dict, optional
+        Grid-specific parameters (e.g. sphere ``resolution``, ``r_max``,
+        ``num_shells``).  Stored in the sidecar.
+
+    Notes
+    -----
+    The ``positions`` parameter accepted by :func:`save_results_json` is
+    intentionally omitted here.  For sphere grids, the viewer reconstructs
+    positions client-side from ``grid_params``, avoiding the need to
+    transfer a large coordinate array.
+    """
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    sidecar_path = Path(f"{output_path}.meta.json")
+
+    flat_flip_times = np.asarray(flip_times, dtype=np.float64).ravel()
+
+    total_points = int(flat_flip_times.size)
+    finite_mask = np.isfinite(flat_flip_times)
+    total_flipped = int(finite_mask.sum())
+
+    # Write the raw binary data as little-endian float32.
+    # NaN values are preserved natively in IEEE 754 float32.
+    flip_times_float32 = flat_flip_times.astype("<f4")
+    flip_times_float32.tofile(str(output_path))
+
+    # Build sidecar metadata.
+    combined_metadata: dict[str, Any] = dict(metadata) if metadata else {}
+    combined_metadata.setdefault("date", datetime.now(timezone.utc).isoformat())
+    combined_metadata["total_points"] = total_points
+    combined_metadata["total_flipped"] = total_flipped
+
+    sidecar_document: dict[str, Any] = {
+        "grid_size": grid_size,
+        "theta_range": list(theta_range),
+        "grid_type": grid_type,
+        "metadata": combined_metadata,
+    }
+
+    if grid_params is not None:
+        sidecar_document["grid_params"] = grid_params
+
+    with open(sidecar_path, "w", encoding="utf-8") as sidecar_file:
+        json.dump(sidecar_document, sidecar_file)
+
+
+def load_results_binary(path: str | Path) -> dict[str, Any]:
+    """Load simulation results from a binary file and its JSON sidecar.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to a ``.bin`` file written by :func:`save_results_binary`.
+        The metadata sidecar is expected at ``{path}.meta.json``.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys ``"grid_size"``, ``"theta_range"``,
+        ``"flip_times"`` (as a 1-D NumPy float64 array with ``np.nan``
+        preserved), ``"metadata"``, ``"grid_type"`` (``"cube"`` or
+        ``"sphere"``), ``"positions"`` (always ``None`` -- binary format
+        omits positions), and ``"grid_params"`` (dict or ``None``).
+    """
+    binary_path = Path(path)
+    sidecar_path = Path(f"{binary_path}.meta.json")
+
+    # Read raw little-endian float32 values and upcast to float64.
+    flip_times_float32 = np.fromfile(str(binary_path), dtype="<f4")
+    flip_times = flip_times_float32.astype(np.float64)
+
+    # Read sidecar metadata.
+    with open(sidecar_path, encoding="utf-8") as sidecar_file:
+        sidecar_document: dict[str, Any] = json.load(sidecar_file)
+
+    return {
+        "grid_size": sidecar_document["grid_size"],
+        "theta_range": sidecar_document["theta_range"],
+        "flip_times": flip_times,
+        "metadata": sidecar_document.get("metadata", {}),
+        "grid_type": sidecar_document.get("grid_type", "cube"),
+        "positions": None,
+        "grid_params": sidecar_document.get("grid_params"),
+    }
 
 
 def load_results_json(path: str | Path) -> dict[str, Any]:

@@ -1,8 +1,8 @@
 """Format conversion and downsampling for triple pendulum simulation data.
 
-Provides bidirectional conversion between the three storage backends
-(JSON, memmap/npy, HDF5) and nearest-neighbor downsampling that preserves
-fractal boundary structure in flip-time grids.
+Provides bidirectional conversion between the four storage backends
+(JSON, memmap/npy, HDF5, binary) and nearest-neighbor downsampling that
+preserves fractal boundary structure in flip-time grids.
 
 Conversions
 -----------
@@ -10,6 +10,7 @@ Conversions
 * :func:`memmap_to_json` -- ``.npy`` + metadata sidecar -> JSON
 * :func:`json_to_hdf5` -- JSON -> gzip-compressed HDF5
 * :func:`hdf5_to_json` -- HDF5 dataset -> JSON
+* :func:`json_to_binary` -- JSON -> raw Float32 ``.bin`` + ``.meta.json``
 
 Downsampling
 ------------
@@ -24,6 +25,10 @@ Run as a module for quick one-off conversions::
     python -m src.utils.convert input.json output.npy
     python -m src.utils.convert input.h5 output.json --dataset flip_times
     python -m src.utils.convert input.json output.json --downsample 40
+
+Batch-convert all JSON simulation files to binary::
+
+    python -m src.utils.convert --to-binary
 """
 
 from __future__ import annotations
@@ -37,9 +42,11 @@ import numpy as np
 import numpy.typing as npt
 
 from src.utils.io import (
+    load_results_binary,
     load_results_hdf5,
     load_results_json,
     load_results_memmap,
+    save_results_binary,
     save_results_hdf5,
     save_results_json,
     save_results_memmap,
@@ -273,6 +280,62 @@ def hdf5_to_json(
 
 
 # ---------------------------------------------------------------------------
+# JSON -> Binary
+# ---------------------------------------------------------------------------
+
+
+def json_to_binary(
+    json_path: str | Path,
+    output_path: str | Path,
+) -> Path:
+    """Convert a JSON simulation file to a binary ``.bin`` + metadata sidecar.
+
+    The resulting ``.bin`` file contains raw little-endian Float32 values
+    that the browser viewer can load directly into a ``Float32Array``
+    with zero parsing overhead.
+
+    For sphere grids, positions are **not** included in the binary output.
+    The viewer reconstructs them client-side from ``grid_params`` stored
+    in the metadata sidecar.
+
+    Parameters
+    ----------
+    json_path : str or Path
+        Path to a JSON file written by :func:`~src.utils.io.save_results_json`.
+    output_path : str or Path
+        Destination ``.bin`` file path.  A sidecar ``{output_path}.meta.json``
+        is created alongside it.
+
+    Returns
+    -------
+    Path
+        The resolved *output_path*.
+    """
+    json_results = load_results_json(json_path)
+
+    grid_size: int = json_results["grid_size"]
+    flat_flip_times: npt.NDArray[np.float64] = json_results["flip_times"]
+    stored_metadata: dict[str, Any] = json_results["metadata"]
+    theta_range: list[float] = json_results["theta_range"]
+    grid_type: str = json_results["grid_type"]
+    grid_params: dict[str, Any] | None = json_results["grid_params"]
+
+    resolved_output_path = Path(output_path)
+
+    save_results_binary(
+        resolved_output_path,
+        grid_size=grid_size,
+        theta_range=tuple(theta_range),
+        flip_times=flat_flip_times,
+        metadata=stored_metadata,
+        grid_type=grid_type,
+        grid_params=grid_params,
+    )
+
+    return resolved_output_path
+
+
+# ---------------------------------------------------------------------------
 # Downsampling
 # ---------------------------------------------------------------------------
 
@@ -343,6 +406,7 @@ _EXTENSION_TO_FORMAT: dict[str, str] = {
     ".npy": "memmap",
     ".h5": "hdf5",
     ".hdf5": "hdf5",
+    ".bin": "binary",
 }
 
 
@@ -371,18 +435,22 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         prog="python -m src.utils.convert",
         description=(
             "Convert triple-pendulum simulation data between formats "
-            "(JSON, memmap/npy, HDF5) and optionally downsample the grid."
+            "(JSON, memmap/npy, HDF5, binary) and optionally downsample the grid."
         ),
     )
     argument_parser.add_argument(
         "input",
         type=str,
-        help="Input file path (.json, .npy, .h5)",
+        nargs="?",
+        default=None,
+        help="Input file path (.json, .npy, .h5, .bin)",
     )
     argument_parser.add_argument(
         "output",
         type=str,
-        help="Output file path (.json, .npy, .h5)",
+        nargs="?",
+        default=None,
+        help="Output file path (.json, .npy, .h5, .bin)",
     )
     argument_parser.add_argument(
         "--dataset",
@@ -396,6 +464,14 @@ def _build_argument_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help="Downsample to an (N, N, N) grid before writing output",
+    )
+    argument_parser.add_argument(
+        "--to-binary",
+        action="store_true",
+        help=(
+            "Batch-convert all data/simulation_*.json files to binary "
+            "(.bin + .meta.json).  No positional arguments needed."
+        ),
     )
     return argument_parser
 
@@ -423,6 +499,16 @@ def _load_as_3d(
         grid_size = flip_times_array.shape[0]
         metadata = memmap_results["metadata"]
         return flip_times_array, grid_size, metadata
+
+    if input_format == "binary":
+        binary_results = load_results_binary(input_path)
+        grid_size = binary_results["grid_size"]
+        flip_times_3d = binary_results["flip_times"].reshape(
+            grid_size, grid_size, grid_size
+        )
+        metadata = binary_results["metadata"]
+        metadata["theta_range"] = binary_results["theta_range"]
+        return flip_times_3d, grid_size, metadata
 
     if input_format == "hdf5":
         _require_h5py()
@@ -469,6 +555,22 @@ def _save_from_3d(
         save_results_memmap(memmap_base_path, flip_times_3d, metadata=memmap_metadata)
         return
 
+    if output_format == "binary":
+        theta_range = metadata.pop("theta_range", [-170.0, 170.0])
+        if isinstance(theta_range, np.ndarray):
+            theta_range = theta_range.tolist()
+        metadata.pop("grid_size", None)
+        metadata.pop("total_points", None)
+        metadata.pop("total_flipped", None)
+        save_results_binary(
+            output_path,
+            grid_size=grid_size,
+            theta_range=tuple(theta_range),
+            flip_times=flip_times_3d,
+            metadata=metadata,
+        )
+        return
+
     if output_format == "hdf5":
         _require_h5py()
         hdf5_metadata = dict(metadata)
@@ -483,6 +585,50 @@ def _save_from_3d(
     raise ValueError(f"Unsupported output format: {output_format}")
 
 
+def _batch_convert_to_binary() -> None:
+    """Convert all ``data/simulation_*.json`` files to binary format.
+
+    For each JSON file, creates a ``.bin`` file (raw Float32 flip-times)
+    and a ``.meta.json`` sidecar in the same ``data/`` directory.
+    """
+    import glob
+
+    json_pattern = "data/simulation_*.json"
+    json_files = sorted(
+        f for f in glob.glob(json_pattern) if not f.endswith(".meta.json")
+    )
+
+    if not json_files:
+        print(f"No files matching '{json_pattern}' found.")
+        return
+
+    print(f"Found {len(json_files)} JSON file(s) to convert.")
+
+    for file_index, json_file_path in enumerate(json_files, start=1):
+        json_path = Path(json_file_path)
+        binary_path = json_path.with_suffix(".bin")
+
+        print(
+            f"  [{file_index}/{len(json_files)}] "
+            f"{json_path.name} -> {binary_path.name} ... ",
+            end="",
+            flush=True,
+        )
+
+        try:
+            json_to_binary(json_path, binary_path)
+        except (KeyError, ValueError) as conversion_error:
+            print(f"skipped ({conversion_error})")
+            continue
+
+        # Report file sizes for quick sanity checking.
+        json_size_mb = json_path.stat().st_size / (1024 * 1024)
+        binary_size_mb = binary_path.stat().st_size / (1024 * 1024)
+        print(f"done ({json_size_mb:.1f} MB -> {binary_size_mb:.1f} MB)")
+
+    print(f"Batch conversion complete: {len(json_files)} file(s) converted.")
+
+
 def main(cli_args: list[str] | None = None) -> None:
     """Entry point for the CLI.
 
@@ -494,6 +640,18 @@ def main(cli_args: list[str] | None = None) -> None:
     """
     argument_parser = _build_argument_parser()
     parsed_args = argument_parser.parse_args(cli_args)
+
+    # Batch mode: convert all JSON files in data/ to binary format.
+    if parsed_args.to_binary:
+        _batch_convert_to_binary()
+        return
+
+    # Single-file mode: require positional arguments.
+    if parsed_args.input is None or parsed_args.output is None:
+        argument_parser.error(
+            "the following arguments are required: input, output "
+            "(or use --to-binary for batch conversion)"
+        )
 
     input_path = Path(parsed_args.input)
     output_path = Path(parsed_args.output)
