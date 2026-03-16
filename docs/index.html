@@ -666,10 +666,7 @@ const state = {
   realmOverlay: null,    // sphere wireframe overlay
   // Per-point cache (computed once from raw data)
   positions: null,       // Float32Array totalPoints * 3
-  rawColors: null,       // Float32Array totalPoints * 3 (base colormap, no opacity baking)
-  isStable: null,        // Uint8Array totalPoints, 1 = never flipped
-  // Visible flags computed by filter pass
-  visibleFlags: null,    // Uint8Array totalPoints
+  isStable: null,        // Float32Array totalPoints (0.0 or 1.0, for GPU attribute)
 };
 
 // ─── Colormaps ───────────────────────────────────────────────────────────────
@@ -754,6 +751,29 @@ function sampleColormap(t, mapName) {
     lo[1][1] + f * (hi[1][1] - lo[1][1]),
     lo[1][2] + f * (hi[1][2] - lo[1][2]),
   ];
+}
+
+function generateColormapTexture(mapName) {
+  const width = 256;
+  const data = new Uint8Array(width * 4);
+  const savedInvert = state.invertColormap;
+  state.invertColormap = false; // texture is always non-inverted; shader handles inversion
+  for (let i = 0; i < width; i++) {
+    const t = i / (width - 1);
+    const [r, g, b] = sampleColormap(t, mapName);
+    data[i * 4 + 0] = Math.round(r * 255);
+    data[i * 4 + 1] = Math.round(g * 255);
+    data[i * 4 + 2] = Math.round(b * 255);
+    data[i * 4 + 3] = 255;
+  }
+  state.invertColormap = savedInvert;
+  const texture = new THREE.DataTexture(data, width, 1, THREE.RGBAFormat);
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 function drawLegend() {
@@ -1100,37 +1120,125 @@ function onResize() {
   state.camera.aspect = w / h;
   state.camera.updateProjectionMatrix();
   state.renderer.setSize(w, h);
-}
-
-// ─── Point cloud construction ─────────────────────────────────────────────────
-
-function computeColors() {
-  const n3 = state.pointCount;
-  const colors = state.rawColors;
-  const flipTimes = state.flipTimes;
-  const isStable = state.isStable;
-  const tMax = state.tMax;
-  const mapName = state.currentColormap;
-
-  const stableColor = sampleColormap(0.02, mapName);
-
-  for (let idx = 0; idx < n3; idx++) {
-    const ft = flipTimes[idx];
-    const stable = isStable[idx] === 1;
-
-    let rgb;
-    if (stable) {
-      rgb = stableColor;
-    } else {
-      const normalizedT = tMax > 0 ? ft / tMax : 0;
-      rgb = sampleColormap(normalizedT, mapName);
-    }
-
-    colors[idx * 3 + 0] = rgb[0];
-    colors[idx * 3 + 1] = rgb[1];
-    colors[idx * 3 + 2] = rgb[2];
+  if (state.points) {
+    const pixelRatio = state.renderer.getPixelRatio();
+    const canvasHeight = state.renderer.domElement.height;
+    state.points.material.uniforms.sizeScale.value = 0.5 * canvasHeight * pixelRatio;
   }
 }
+
+// ─── GLSL Shaders ─────────────────────────────────────────────────────────────
+
+const VERT_SHADER = `
+  attribute float flipTime;
+  attribute float aIsStable;
+
+  uniform float pointScale;
+  uniform float sizeScale;
+  uniform float tMax;
+
+  // Filter: time
+  uniform vec2 timeRange;
+  uniform float showStable;
+
+  // Filter: cube slices
+  uniform vec3 sliceEnabled;
+  uniform vec3 sliceCenter;
+  uniform float sliceThickness;
+  uniform float thetaMin;
+  uniform float thetaSpan;
+
+  // Filter: sphere shell
+  uniform float isSphere;
+  uniform float shellSliceEnabled;
+  uniform float shellRadius;
+  uniform float shellThickness;
+  uniform float rMax;
+
+  // Filter: octants (two vec4 to avoid dynamic array indexing in WebGL 1)
+  uniform vec4 octantMask0;
+  uniform vec4 octantMask1;
+
+  varying float vNormalizedTime;
+  varying float vIsStable;
+  varying float vVisible;
+
+  void main() {
+    float visible = 1.0;
+    float ft = flipTime;
+    float stable = aIsStable;
+
+    // Octant filtering
+    float sx = step(0.0, position.x);
+    float sy = step(0.0, position.y);
+    float sz = step(0.0, position.z);
+    float oIdx = 4.0 * (1.0 - sx) + 2.0 * (1.0 - sy) + (1.0 - sz);
+    float omask = 1.0;
+    omask = mix(omask, octantMask0.x, step(abs(oIdx - 0.0), 0.5));
+    omask = mix(omask, octantMask0.y, step(abs(oIdx - 1.0), 0.5));
+    omask = mix(omask, octantMask0.z, step(abs(oIdx - 2.0), 0.5));
+    omask = mix(omask, octantMask0.w, step(abs(oIdx - 3.0), 0.5));
+    omask = mix(omask, octantMask1.x, step(abs(oIdx - 4.0), 0.5));
+    omask = mix(omask, octantMask1.y, step(abs(oIdx - 5.0), 0.5));
+    omask = mix(omask, octantMask1.z, step(abs(oIdx - 6.0), 0.5));
+    omask = mix(omask, octantMask1.w, step(abs(oIdx - 7.0), 0.5));
+    visible *= omask;
+
+    // Spatial filtering
+    // Sphere: shell slice
+    float r = length(position) * rMax;
+    float shellVis = 1.0 - shellSliceEnabled + shellSliceEnabled * step(abs(r - shellRadius), shellThickness);
+    // Cube: axis slices
+    vec3 theta = vec3(thetaMin) + (position + 1.0) / 2.0 * thetaSpan;
+    vec3 sliceDist = abs(theta - sliceCenter);
+    vec3 sliceVis = vec3(1.0) - sliceEnabled + sliceEnabled * step(sliceDist, vec3(sliceThickness));
+    float cubeVis = sliceVis.x * sliceVis.y * sliceVis.z;
+    visible *= mix(cubeVis, shellVis, isSphere);
+
+    // Time + stability filtering
+    float stableVis = stable * showStable + (1.0 - stable);
+    float inRange = step(timeRange.x, ft) * step(ft, timeRange.y);
+    float timeVis = stable + (1.0 - stable) * inRange;
+    visible *= stableVis * timeVis;
+
+    // Varyings
+    vNormalizedTime = tMax > 0.0 ? ft / tMax : 0.0;
+    vIsStable = stable;
+    vVisible = visible;
+
+    if (visible < 0.5) {
+      gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
+      gl_PointSize = 0.0;
+    } else {
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+      gl_PointSize = pointScale * (sizeScale / -mvPosition.z);
+    }
+  }
+`;
+
+const FRAG_SHADER = `
+  uniform sampler2D colormapTexture;
+  uniform float uOpacity;
+  uniform float invertColormap;
+
+  varying float vNormalizedTime;
+  varying float vIsStable;
+  varying float vVisible;
+
+  void main() {
+    if (vVisible < 0.5) discard;
+
+    float t = clamp(vNormalizedTime, 0.0, 1.0);
+    t = mix(t, 0.02, vIsStable);
+    t = mix(t, 1.0 - t, invertColormap);
+
+    vec4 color = texture2D(colormapTexture, vec2(t, 0.5));
+    gl_FragColor = vec4(color.rgb, uOpacity);
+  }
+`;
+
+// ─── Point cloud construction ─────────────────────────────────────────────────
 
 // Reconstruct sphere viewer positions from grid_params (binary format).
 // Mirrors the Python make_sphere_grid() Fibonacci spiral algorithm.
@@ -1169,18 +1277,14 @@ function buildPointCloud(data) {
 
   const totalPoints = flipTimes.length;
   const positions = new Float32Array(totalPoints * 3);
-  const colors    = new Float32Array(totalPoints * 3);
-  const isStable  = new Uint8Array(totalPoints);
+  const flipTimeAttr = new Float32Array(totalPoints);
+  const isStableAttr = new Float32Array(totalPoints);
 
   if (explicitPositions) {
-    // Sphere (or any grid with explicit positions): copy directly.
     positions.set(explicitPositions);
   } else if (gridType === 'sphere' && gridParams) {
-    // Sphere without explicit positions (binary format): reconstruct
-    // from grid_params using the Fibonacci spiral algorithm.
     reconstructSpherePositions(positions, gridParams);
   } else {
-    // Cube: reconstruct positions from grid indices.
     for (let idx = 0; idx < totalPoints; idx++) {
       const ix = idx % gridSize;
       const iy = Math.floor(idx / gridSize) % gridSize;
@@ -1194,38 +1298,65 @@ function buildPointCloud(data) {
 
   for (let idx = 0; idx < totalPoints; idx++) {
     const ft = flipTimes[idx];
-    isStable[idx] = !isFinite(ft) ? 1 : 0;
+    const stable = !isFinite(ft);
+    isStableAttr[idx] = stable ? 1.0 : 0.0;
+    flipTimeAttr[idx] = stable ? 0.0 : ft;
   }
 
   state.positions = positions;
-  state.rawColors = colors;
-  state.isStable  = isStable;
-  state.visibleFlags = new Uint8Array(totalPoints);
+  state.isStable = isStableAttr;
   state.pointCount = totalPoints;
 
-  // Compute colors using selected colormap
-  computeColors();
-
-  // Build geometry
+  // Build geometry with per-point scalar attributes (GPU does colormap + filtering)
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('flipTime', new THREE.BufferAttribute(flipTimeAttr, 1));
+  geometry.setAttribute('aIsStable', new THREE.BufferAttribute(isStableAttr, 1));
 
-  const displayColors = new Float32Array(colors);
-  geometry.setAttribute('color', new THREE.BufferAttribute(displayColors, 3));
+  const colormapTexture = generateColormapTexture(state.currentColormap);
+  const isSphere = state.realm === 'sphere';
+  const rMax = gridParams?.r_max || 170;
 
-  const material = new THREE.PointsMaterial({
-    size: 0.013,
-    vertexColors: true,
+  // Compute sizeScale to match Three.js PointsMaterial sizeAttenuation behavior
+  const pixelRatio = state.renderer.getPixelRatio();
+  const canvasHeight = state.renderer.domElement.height;
+  const sizeScale = 0.5 * canvasHeight * pixelRatio;
+
+  const material = new THREE.ShaderMaterial({
+    vertexShader: VERT_SHADER,
+    fragmentShader: FRAG_SHADER,
+    uniforms: {
+      colormapTexture: { value: colormapTexture },
+      uOpacity: { value: 0.05 },
+      pointScale: { value: 0.013 },
+      sizeScale: { value: sizeScale },
+      tMax: { value: tMax },
+      invertColormap: { value: state.invertColormap ? 1.0 : 0.0 },
+      timeRange: { value: new THREE.Vector2(0, tMax) },
+      showStable: { value: 1.0 },
+      sliceEnabled: { value: new THREE.Vector3(0, 0, 0) },
+      sliceCenter: { value: new THREE.Vector3(0, 0, 0) },
+      sliceThickness: { value: 5.0 },
+      thetaMin: { value: thetaRange[0] },
+      thetaSpan: { value: thetaRange[1] - thetaRange[0] },
+      isSphere: { value: isSphere ? 1.0 : 0.0 },
+      shellSliceEnabled: { value: 0.0 },
+      shellRadius: { value: 85.0 },
+      shellThickness: { value: 10.0 },
+      rMax: { value: rMax },
+      octantMask0: { value: new THREE.Vector4(1, 1, 1, 1) },
+      octantMask1: { value: new THREE.Vector4(1, 1, 1, 1) },
+    },
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     transparent: true,
-    opacity: 0.05,
-    sizeAttenuation: true,
   });
 
   if (state.points) {
     state.scene.remove(state.points);
     state.geometry.dispose();
+    state.points.material.uniforms.colormapTexture.value.dispose();
+    state.points.material.dispose();
   }
 
   state.geometry = geometry;
@@ -1237,121 +1368,142 @@ function buildPointCloud(data) {
 
 // ─── Filter & visibility ──────────────────────────────────────────────────────
 
+// Debounce timer for stats counting on large datasets
+let statsTimerId = null;
+
 function applyFilters() {
   if (!state.points) return;
 
-  const totalPoints = state.pointCount;
-  const gridSize = state.gridSize;
-  const thetaRange = state.thetaRange;
-  const thetaMin = thetaRange[0];
-  const thetaSpan = thetaRange[1] - thetaRange[0];
+  const uniforms = state.points.material.uniforms;
   const isSphere = state.realm === 'sphere';
 
-  const timeMin = parseFloat(document.getElementById('time-min').value) * state.tMax;
-  const timeMax = parseFloat(document.getElementById('time-max').value) * state.tMax;
+  // Time filter → uniforms (instant)
+  const timeMinNorm = parseFloat(document.getElementById('time-min').value);
+  const timeMaxNorm = parseFloat(document.getElementById('time-max').value);
+  uniforms.timeRange.value.set(timeMinNorm * state.tMax, timeMaxNorm * state.tMax);
+
+  // Stable visibility
   const showStable = document.getElementById('show-stable').checked;
+  uniforms.showStable.value = showStable ? 1.0 : 0.0;
 
-  // Cube slice params
-  let sliceThickness = 5, xEn = false, yEn = false, zEn = false, xVal = 0, yVal = 0, zVal = 0;
+  // Cube slices
   if (!isSphere) {
-    sliceThickness = parseFloat(document.getElementById('slice-thickness').value);
-    xEn  = document.getElementById('slice-x-en').checked;
-    yEn  = document.getElementById('slice-y-en').checked;
-    zEn  = document.getElementById('slice-z-en').checked;
-    xVal = parseFloat(document.getElementById('slice-x').value);
-    yVal = parseFloat(document.getElementById('slice-y').value);
-    zVal = parseFloat(document.getElementById('slice-z').value);
+    const sliceThickness = parseFloat(document.getElementById('slice-thickness').value);
+    const xEn = document.getElementById('slice-x-en').checked ? 1.0 : 0.0;
+    const yEn = document.getElementById('slice-y-en').checked ? 1.0 : 0.0;
+    const zEn = document.getElementById('slice-z-en').checked ? 1.0 : 0.0;
+    const xVal = parseFloat(document.getElementById('slice-x').value);
+    const yVal = parseFloat(document.getElementById('slice-y').value);
+    const zVal = parseFloat(document.getElementById('slice-z').value);
+
+    uniforms.sliceEnabled.value.set(xEn, yEn, zEn);
+    uniforms.sliceCenter.value.set(xVal, yVal, zVal);
+    uniforms.sliceThickness.value = sliceThickness;
   }
 
-  // Sphere shell slice params
-  let shellSliceEn = false, shellRadius = 85, shellThickness = 10;
-  const rMax = state.gridParams?.r_max || 170;
+  // Sphere shell
   if (isSphere) {
-    shellSliceEn = document.getElementById('shell-slice-en').checked;
-    shellRadius = parseFloat(document.getElementById('shell-radius').value);
-    shellThickness = parseFloat(document.getElementById('shell-thickness').value);
+    uniforms.shellSliceEnabled.value = document.getElementById('shell-slice-en').checked ? 1.0 : 0.0;
+    uniforms.shellRadius.value = parseFloat(document.getElementById('shell-radius').value);
+    uniforms.shellThickness.value = parseFloat(document.getElementById('shell-thickness').value);
   }
 
-  // Octant visibility
-  const octantVisible = new Array(8);
-  for (let octantIdx = 0; octantIdx < 8; octantIdx++) {
-    octantVisible[octantIdx] = document.getElementById('octant-' + (octantIdx + 1)).checked;
-  }
+  // Octants
+  const mask0 = uniforms.octantMask0.value;
+  const mask1 = uniforms.octantMask1.value;
+  mask0.x = document.getElementById('octant-1').checked ? 1.0 : 0.0;
+  mask0.y = document.getElementById('octant-2').checked ? 1.0 : 0.0;
+  mask0.z = document.getElementById('octant-3').checked ? 1.0 : 0.0;
+  mask0.w = document.getElementById('octant-4').checked ? 1.0 : 0.0;
+  mask1.x = document.getElementById('octant-5').checked ? 1.0 : 0.0;
+  mask1.y = document.getElementById('octant-6').checked ? 1.0 : 0.0;
+  mask1.z = document.getElementById('octant-7').checked ? 1.0 : 0.0;
+  mask1.w = document.getElementById('octant-8').checked ? 1.0 : 0.0;
 
-  const colorAttr = state.geometry.getAttribute('color');
-  const displayColors = colorAttr.array;
-  const rawColors = state.rawColors;
+  // Stats counting (read-only CPU loop, debounced for large datasets)
+  if (statsTimerId) clearTimeout(statsTimerId);
+  const delay = state.pointCount > 10_000_000 ? 200 : 0;
+  if (delay > 0) {
+    statsTimerId = setTimeout(countVisiblePoints, delay);
+  } else {
+    countVisiblePoints();
+  }
+}
+
+function countVisiblePoints() {
+  const totalPoints = state.pointCount;
   const flipTimes = state.flipTimes;
-  const isStable  = state.isStable;
+  const isStable = state.isStable;
   const positions = state.positions;
+  const isSphere = state.realm === 'sphere';
+  const uniforms = state.points.material.uniforms;
+
+  const timeMin = uniforms.timeRange.value.x;
+  const timeMax = uniforms.timeRange.value.y;
+  const showStable = uniforms.showStable.value > 0.5;
+  const thetaMin = state.thetaRange[0];
+  const thetaSpan = state.thetaRange[1] - state.thetaRange[0];
+
+  const sliceEn = uniforms.sliceEnabled.value;
+  const sliceCtr = uniforms.sliceCenter.value;
+  const thickness = uniforms.sliceThickness.value;
+
+  const shellSliceEn = uniforms.shellSliceEnabled.value > 0.5;
+  const shellRadius = uniforms.shellRadius.value;
+  const shellThick = uniforms.shellThickness.value;
+  const rMax = uniforms.rMax.value;
+
+  const maskArr = [
+    uniforms.octantMask0.value.x, uniforms.octantMask0.value.y,
+    uniforms.octantMask0.value.z, uniforms.octantMask0.value.w,
+    uniforms.octantMask1.value.x, uniforms.octantMask1.value.y,
+    uniforms.octantMask1.value.z, uniforms.octantMask1.value.w,
+  ];
 
   let showing = 0;
   let totalFlipped = 0;
 
   for (let idx = 0; idx < totalPoints; idx++) {
-    const stable = isStable[idx] === 1;
+    const stable = isStable[idx] > 0.5;
     const ft = flipTimes[idx];
-
     if (!stable) totalFlipped++;
 
     let visible = true;
 
-    // Spatial filtering (realm-specific)
-    if (isSphere) {
-      // Shell slice: filter by radial distance
+    // Octant
+    const nx = positions[idx * 3];
+    const ny = positions[idx * 3 + 1];
+    const nz = positions[idx * 3 + 2];
+    const octantIndex = (nx >= 0 ? 0 : 4) + (ny >= 0 ? 0 : 2) + (nz >= 0 ? 0 : 1);
+    if (maskArr[octantIndex] < 0.5) visible = false;
+
+    // Spatial
+    if (visible && isSphere) {
       if (shellSliceEn) {
-        const px = positions[idx * 3 + 0];
-        const py = positions[idx * 3 + 1];
-        const pz = positions[idx * 3 + 2];
-        const r = Math.sqrt(px * px + py * py + pz * pz) * rMax;
-        if (Math.abs(r - shellRadius) > shellThickness) visible = false;
+        const r = Math.sqrt(nx * nx + ny * ny + nz * nz) * rMax;
+        if (Math.abs(r - shellRadius) > shellThick) visible = false;
       }
-    } else {
-      // Cube slices: filter by theta angle
-      const ix = idx % gridSize;
-      const iy = Math.floor(idx / gridSize) % gridSize;
-      const iz = Math.floor(idx / (gridSize * gridSize));
-
-      const t1 = thetaMin + (ix / (gridSize - 1)) * thetaSpan;
-      const t2 = thetaMin + (iy / (gridSize - 1)) * thetaSpan;
-      const t3 = thetaMin + (iz / (gridSize - 1)) * thetaSpan;
-
-      if (xEn && Math.abs(t1 - xVal) > sliceThickness) visible = false;
-      if (visible && yEn && Math.abs(t2 - yVal) > sliceThickness) visible = false;
-      if (visible && zEn && Math.abs(t3 - zVal) > sliceThickness) visible = false;
+    } else if (visible && !isSphere) {
+      const t1 = thetaMin + (nx + 1) / 2 * thetaSpan;
+      const t2 = thetaMin + (ny + 1) / 2 * thetaSpan;
+      const t3 = thetaMin + (nz + 1) / 2 * thetaSpan;
+      if (sliceEn.x > 0.5 && Math.abs(t1 - sliceCtr.x) > thickness) visible = false;
+      if (visible && sliceEn.y > 0.5 && Math.abs(t2 - sliceCtr.y) > thickness) visible = false;
+      if (visible && sliceEn.z > 0.5 && Math.abs(t3 - sliceCtr.z) > thickness) visible = false;
     }
 
-    // Octant filtering (works for both realms using position coordinates)
-    if (visible) {
-      const nx = positions[idx * 3 + 0];
-      const ny = positions[idx * 3 + 1];
-      const nz = positions[idx * 3 + 2];
-      const octantIndex = (nx >= 0 ? 0 : 4) + (ny >= 0 ? 0 : 2) + (nz >= 0 ? 0 : 1);
-      if (!octantVisible[octantIndex]) visible = false;
-    }
-
-    // Time + stability filtering (shared)
+    // Time + stability
     if (visible) {
       if (stable) {
-        visible = showStable;
+        if (!showStable) visible = false;
       } else {
         if (ft < timeMin || ft > timeMax) visible = false;
       }
     }
 
-    if (visible) {
-      showing++;
-      displayColors[idx * 3 + 0] = rawColors[idx * 3 + 0];
-      displayColors[idx * 3 + 1] = rawColors[idx * 3 + 1];
-      displayColors[idx * 3 + 2] = rawColors[idx * 3 + 2];
-    } else {
-      displayColors[idx * 3 + 0] = 0;
-      displayColors[idx * 3 + 1] = 0;
-      displayColors[idx * 3 + 2] = 0;
-    }
+    if (visible) showing++;
   }
 
-  colorAttr.needsUpdate = true;
   updateStats(showing, totalPoints, totalFlipped);
 }
 
@@ -1428,9 +1580,11 @@ function changeResolution() {
 function changeColormap() {
   const mapName = document.getElementById('colormap-select').value;
   state.currentColormap = mapName;
-  if (state.pointCount > 0) {
-    computeColors();
-    applyFilters();
+  if (state.points) {
+    const newTexture = generateColormapTexture(mapName);
+    const oldTexture = state.points.material.uniforms.colormapTexture.value;
+    state.points.material.uniforms.colormapTexture.value = newTexture;
+    if (oldTexture) oldTexture.dispose();
   }
   drawLegend();
 }
@@ -1440,9 +1594,8 @@ function toggleInvertColormap() {
   const btn = document.getElementById('invert-btn');
   btn.style.borderColor = state.invertColormap ? 'var(--text-accent)' : '';
   btn.style.color = state.invertColormap ? 'var(--text-accent)' : '';
-  if (state.pointCount > 0) {
-    computeColors();
-    applyFilters();
+  if (state.points) {
+    state.points.material.uniforms.invertColormap.value = state.invertColormap ? 1.0 : 0.0;
   }
   drawLegend();
 }
@@ -1453,8 +1606,7 @@ function updatePointSize() {
   const val = parseFloat(document.getElementById('point-size').value);
   document.getElementById('point-size-val').textContent = val;
   if (state.points) {
-    state.points.material.size = val * 0.013;
-    state.points.material.needsUpdate = true;
+    state.points.material.uniforms.pointScale.value = val * 0.013;
   }
 }
 
@@ -1462,8 +1614,7 @@ function updateOpacity() {
   const val = parseFloat(document.getElementById('opacity').value);
   document.getElementById('opacity-val').textContent = val.toFixed(2);
   if (state.points) {
-    state.points.material.opacity = val;
-    state.points.material.needsUpdate = true;
+    state.points.material.uniforms.uOpacity.value = val;
   }
 }
 
@@ -1674,8 +1825,8 @@ function applyConfigToMaterial() {
   const r = CONFIG.rendering || {};
   const disp = CONFIG.display || {};
   if (state.points) {
-    if (r.pointSize != null) state.points.material.size = r.pointSize * 0.013;
-    if (r.opacity != null) state.points.material.opacity = r.opacity;
+    if (r.pointSize != null) state.points.material.uniforms.pointScale.value = r.pointSize * 0.013;
+    if (r.opacity != null) state.points.material.uniforms.uOpacity.value = r.opacity;
   }
   if (state.controls && disp.autoRotate) {
     state.controls.autoRotate = true;
