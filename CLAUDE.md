@@ -22,8 +22,9 @@ Triple pendulum with equal point masses (m=1) and equal rod lengths (l=1):
 ```
 src/
 ├── simulation/
-│   ├── physics.py         # Triple pendulum EOM (numpy + torch)
-│   ├── batch_sim.py       # Batch RK4/dopri8 simulation
+│   ├── physics.py         # Triple pendulum EOM (numpy + torch + numba)
+│   ├── cuda_sim.py        # CUDA C kernel via CuPy/PyCUDA
+│   ├── batch_sim.py       # Batch RK4 simulation (CPU + GPU paths)
 │   └── metrics.py         # Chaos metrics (flip time, Lyapunov)
 ├── visualization/
 │   ├── viewer.html        # Interactive Three.js/WebGPU viewer
@@ -31,16 +32,18 @@ src/
 │   └── colormap.py        # Colormaps and data→color transforms
 └── utils/
     ├── grid.py            # Initial condition grid construction
-    └── io.py              # Data I/O (JSON, memmap, HDF5)
+    ├── io.py              # Data I/O (JSON, binary, memmap, HDF5)
+    ├── convert.py         # Format conversion between storage backends
+    └── registry.py        # Data registry generator (YAML inventory)
 ```
 
-`data/` (gitignored) holds generated simulation output. `renders/` holds output images/videos.
+`data/` (gitignored) holds generated simulation output + `_registry.yml` inventory. `renders/` holds output images/videos.
 
 ## Tech Stack
 
-- **Simulation (CPU):** Python 3 + NumPy, RK4 integration, `np.linalg.solve`
-- **Simulation (GPU):** PyTorch + torchdiffeq, CUDA batching, `odeint(method='dopri8')`
-- **Large data:** NumPy memmap for grids beyond memory
+- **Simulation (CPU):** Python 3 + NumPy + Numba JIT, RK4 integration, Cramer's rule
+- **Simulation (GPU):** CuPy CUDA C kernel, ~170K pendulums/sec
+- **Data formats:** JSON + binary (.bin + .meta.json) for zero-parse browser loading
 - **Interactive viz:** Three.js (WebGL point cloud with additive blending)
 - **Volume rendering:** Vispy or Blender volumetric
 - **Animation:** Manim (optional)
@@ -54,17 +57,38 @@ Two grid types (realms) for sampling initial conditions:
 
 Sphere grid uses explicit `positions` array in JSON (avoids duplicating Fibonacci algorithm in JS). The simulation kernel is grid-agnostic — it receives (N, 3) initial angles regardless of realm.
 
+## Resolution Grid
+
+17 resolutions: `[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 125, 150, 175, 200, 300, 400, 500]`
+
+- Fine: 10-100 by 10
+- Medium: 125, 150, 175, 200
+- Coarse: 300, 400, 500
+
+GPU (CuPy) runs all 17 resolutions for both realms (34 datasets).
+CPU (Numba) runs 10-200 for both realms (28 datasets).
+Total: 62 datasets tracked in `data/_registry.yml`.
+
 ## Commands
 
 ```bash
-# CPU simulation (~2 min for 40³ grid)
-python triple_pendulum_sim.py
-
-# GPU simulation (cube realm)
-python3 run_gpu_simulations.py --resolutions 20 40 100
+# GPU simulation (all resolutions, cube realm)
+python3 run_simulations.py --backend gpu --realm cube
 
 # GPU simulation (sphere realm)
-python3 run_gpu_simulations.py --realm sphere --resolutions 20 40 100
+python3 run_simulations.py --backend gpu --realm sphere
+
+# CPU simulation (10-200 only, cube realm)
+python3 run_simulations.py --backend cpu --realm cube
+
+# Specific resolutions
+python3 run_simulations.py --backend gpu --realm cube --resolutions 100 200
+
+# Dry run (preview what would be simulated)
+python3 run_simulations.py --dry-run
+
+# Update data registry
+python3 -m src.utils.registry
 
 # Serve the interactive viewer locally
 python3 serve.py
@@ -76,5 +100,5 @@ python3 serve.py
 - Naive rendering of all voxels produces an opaque blob. Use boundary-only rendering, slice removal, volumetric transparency, or isosurface extraction.
 - The additive-blending point cloud in the viewer naturally highlights fractal boundaries.
 - Slice controls (fix one θ axis) give 2D cross-sections for exploration.
-- Target resolution: 200³ = 8M voxels (GPU), up from 40³ = 64K (CPU prototype).
+- Max resolution: 500³ = 125M voxels (GPU). CPU capped at 200³ = 8M voxels.
 - Sphere realm: `positions` array stores explicit point coordinates to avoid JS-side Fibonacci reimplementation; size overhead is offset by ~48% fewer points.

@@ -12,11 +12,12 @@ Map the chaos of a triple pendulum by sweeping all possible starting angles (θ�
 ## Quick Start
 
 ```bash
-pip install -e .            # CPU only (NumPy)
-pip install -e ".[gpu]"     # GPU support (PyTorch + torchdiffeq)
+pip install -e .            # CPU only (NumPy + Numba)
+pip install -e ".[gpu]"     # GPU support (CuPy CUDA)
 
-python3 run_gpu_simulations.py --resolutions 40   # simulate a 40³ grid
-python3 serve.py                                   # viewer at http://localhost:8000
+python3 run_simulations.py --backend gpu --realm cube   # GPU simulation
+python3 run_simulations.py --backend cpu --realm cube   # CPU simulation (10-200)
+python3 serve.py                                        # viewer at http://localhost:8000
 ```
 
 ## Simulation
@@ -31,11 +32,12 @@ The simulator auto-selects the fastest available backend:
 
 Backend priority: **CuPy > PyCUDA > PyTorch GPU > Numba > NumPy** (auto-detected at runtime).
 
-Two grid geometries (realms) sample initial conditions differently:
+Resolution grid: `[10, 20, 30, ..., 100, 125, 150, 175, 200, 300, 400, 500, 600]` (18 steps). GPU runs all 18; CPU capped at 200. Two grid geometries (realms):
 
 ```bash
-python3 run_gpu_simulations.py --realm cube --resolutions 20 40 100 200   # uniform Cartesian (default)
-python3 run_gpu_simulations.py --realm sphere --resolutions 20 40 100 200 # Fibonacci-spiral shells (~48% fewer points)
+python3 run_simulations.py --backend gpu --realm cube     # uniform Cartesian (default)
+python3 run_simulations.py --backend gpu --realm sphere   # Fibonacci-spiral shells (~48% fewer points)
+python3 run_simulations.py --dry-run                      # preview what would run
 ```
 
 ## Viewer
@@ -52,11 +54,10 @@ The [interactive viewer](https://huggingface.co/spaces/pjt222/triple-pendulum) i
 ```
 src/
   simulation/       Physics engine, batch RK4, CUDA C kernel
-  analysis/         Chaos metrics and post-processing
   visualization/    Colormaps and rendering tools
-  utils/            Grid construction, data I/O, binary format
+  utils/            Grid construction, data I/O, binary format, registry
 docs/               Interactive viewer (index.html + simulation data)
-data/               Raw simulation output (gitignored)
+data/               Simulation output + _registry.yml inventory (gitignored)
 renders/            Images and animations
 ```
 
