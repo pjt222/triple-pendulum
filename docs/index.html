@@ -383,6 +383,37 @@
       border-color: rgba(0, 240, 255, 0.3);
       color: var(--text-accent);
     }
+
+    /* Tooltips */
+    [data-tooltip] {
+      position: relative;
+    }
+    [data-tooltip]::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      left: 50%;
+      top: 100%;
+      transform: translateX(-50%);
+      margin-top: 6px;
+      padding: 5px 8px;
+      background: rgba(10, 10, 20, 0.95);
+      border: 1px solid rgba(0, 240, 255, 0.35);
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      line-height: 1.3;
+      max-width: 220px;
+      white-space: normal;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+      z-index: 200;
+      box-shadow: 0 0 8px rgba(0, 240, 255, 0.15);
+    }
+    [data-tooltip]:hover::after {
+      opacity: 1;
+    }
   </style>
 </head>
 <body>
@@ -413,21 +444,21 @@
     <!-- Dataset -->
     <div>
       <div class="section-label">Dataset</div>
-      <div class="control-row" style="margin-bottom:7px">
+      <div class="control-row" style="margin-bottom:7px" data-tooltip="Grid geometry: Cube (uniform Cartesian) or Sphere (Fibonacci spiral shells)">
         <label>Realm</label>
         <select id="realm-select" style="flex:1" onchange="changeRealm()">
           <option value="cube" selected>Cube</option>
           <option value="sphere">Sphere</option>
         </select>
       </div>
-      <div class="control-row" style="margin-bottom:7px">
+      <div class="control-row" style="margin-bottom:7px" data-tooltip="Simulation engine: GPU (CuPy CUDA, all resolutions) or CPU (Numba, up to 200)">
         <label>Backend</label>
         <select id="backend-select" style="flex:1" onchange="changeBackend()">
           <option value="cpu">CPU</option>
           <option value="gpu" selected>GPU</option>
         </select>
       </div>
-      <div class="control-row">
+      <div class="control-row" data-tooltip="Grid points per axis. Higher = more detail and memory">
         <label>Resolution</label>
         <select id="resolution-select" style="flex:1" onchange="changeResolution()">
         </select>
@@ -439,7 +470,7 @@
     <!-- Colormap -->
     <div>
       <div class="section-label">Colormap</div>
-      <div class="control-row" style="gap:4px">
+      <div class="control-row" style="gap:4px" data-tooltip="Color mapping for flip-time values. Inv reverses the direction">
         <select id="colormap-select" style="flex:1" onchange="changeColormap()">
           <option value="cyberpunk" selected>Cyberpunk</option>
           <option value="magma">Magma</option>
@@ -465,16 +496,16 @@
     <div>
       <div class="section-label">Appearance</div>
 
-      <div class="control-row" style="margin-bottom:7px">
+      <div class="control-row" style="margin-bottom:7px" data-tooltip="Rendered point scale (log-scaled for fine control at small sizes)">
         <label>Point size</label>
-        <input type="range" id="point-size" min="1" max="10" step="0.5" value="1" oninput="updatePointSize()" />
-        <span class="value-label" id="point-size-val">1</span>
+        <input type="range" id="point-size" min="0" max="1" step="0.005" value="0.20" oninput="updatePointSize()" />
+        <span class="value-label" id="point-size-val">1.0</span>
       </div>
 
-      <div class="control-row">
+      <div class="control-row" data-tooltip="Alpha per point (log-scaled). Low values reveal internal structure via additive blending">
         <label>Opacity</label>
-        <input type="range" id="opacity" min="0.05" max="1" step="0.05" value="0.05" oninput="updateOpacity()" />
-        <span class="value-label" id="opacity-val">0.05</span>
+        <input type="range" id="opacity" min="0" max="1" step="0.005" value="0.35" oninput="updateOpacity()" />
+        <span class="value-label" id="opacity-val">0.050</span>
       </div>
     </div>
 
@@ -484,31 +515,31 @@
     <div>
       <div class="section-label">Flip time filter</div>
 
-      <div class="control-row" style="margin-bottom:7px">
+      <div class="control-row" style="margin-bottom:7px" data-tooltip="Hide points that flipped before this time">
         <label>Min</label>
         <input type="range" id="time-min" min="0" max="1" step="0.01" value="0" oninput="updateTimeFilter()" />
         <span class="value-label" id="time-min-val">0.0 s</span>
       </div>
 
-      <div class="control-row">
+      <div class="control-row" data-tooltip="Hide points that flipped after this time">
         <label>Max</label>
         <input type="range" id="time-max" min="0" max="1" step="0.01" value="1" oninput="updateTimeFilter()" />
         <span class="value-label" id="time-max-val">-- s</span>
       </div>
 
-      <div class="control-row" style="margin-top:7px">
+      <div class="control-row" style="margin-top:7px" data-tooltip="Show pendulums that never flipped within simulation time">
         <label>Show stable</label>
         <input type="checkbox" id="show-stable" onchange="applyFilters()" />
       </div>
-      <div class="control-row" style="margin-top:4px">
+      <div class="control-row" style="margin-top:4px" data-tooltip="Toggle the X/Y/Z axis indicator lines">
         <label>Show axes</label>
         <input type="checkbox" id="show-axes" checked onchange="toggleAxes()" />
       </div>
-      <div class="control-row" style="margin-top:4px">
+      <div class="control-row" style="margin-top:4px" data-tooltip="Continuously rotate the camera around the center">
         <label>Auto-rotate</label>
         <input type="checkbox" id="auto-rotate" onchange="toggleAutoRotate()" />
       </div>
-      <div class="control-row" style="margin-top:4px">
+      <div class="control-row" style="margin-top:4px" data-tooltip="Speed of automatic camera rotation">
         <label>Rot. speed</label>
         <input type="range" id="rotate-speed" min="0.1" max="5" step="0.1" value="1" oninput="updateRotateSpeed()" />
         <span class="value-label" id="rotate-speed-val">1.0</span>
@@ -522,16 +553,16 @@
       <div>
         <div class="section-label">Slice controls</div>
 
-        <div class="control-row" style="margin-bottom:4px">
+        <div class="control-row" style="margin-bottom:4px" data-tooltip="Half-width of the slice slab in degrees. At 170 the full cube is visible">
           <label>Thickness</label>
-          <input type="range" id="slice-thickness" min="1" max="20" step="1" value="5" oninput="updateSliceThickness()" />
+          <input type="range" id="slice-thickness" min="1" max="170" step="1" value="5" oninput="updateSliceThickness()" />
           <span class="value-label" id="slice-thickness-val">5&deg;</span>
         </div>
       </div>
 
       <!-- Axis slices -->
       <div class="slice-axis">
-        <div class="slice-axis-header">
+        <div class="slice-axis-header" data-tooltip="Fix first pendulum angle to see a 2D cross-section">
           <input type="checkbox" id="slice-x-en" onchange="applyFilters()" />
           <label>&#952;&#8321; slice</label>
           <span class="value-label" id="slice-x-val">0&deg;</span>
@@ -540,7 +571,7 @@
       </div>
 
       <div class="slice-axis">
-        <div class="slice-axis-header">
+        <div class="slice-axis-header" data-tooltip="Fix second pendulum angle to see a 2D cross-section">
           <input type="checkbox" id="slice-y-en" onchange="applyFilters()" />
           <label>&#952;&#8322; slice</label>
           <span class="value-label" id="slice-y-val">0&deg;</span>
@@ -549,7 +580,7 @@
       </div>
 
       <div class="slice-axis">
-        <div class="slice-axis-header">
+        <div class="slice-axis-header" data-tooltip="Fix third pendulum angle to see a 2D cross-section">
           <input type="checkbox" id="slice-z-en" onchange="applyFilters()" />
           <label>&#952;&#8323; slice</label>
           <span class="value-label" id="slice-z-val">0&deg;</span>
@@ -563,7 +594,7 @@
       <div class="section-label">Shell slice</div>
 
       <div class="slice-axis">
-        <div class="slice-axis-header">
+        <div class="slice-axis-header" data-tooltip="Enable radial shell filter for sphere realm">
           <input type="checkbox" id="shell-slice-en" onchange="applyFilters()" />
           <label>r shell</label>
           <span class="value-label" id="shell-radius-val">85&deg;</span>
@@ -571,9 +602,9 @@
         <input type="range" id="shell-radius" min="0" max="170" step="1" value="85" oninput="updateShellLabel()" />
       </div>
 
-      <div class="control-row" style="margin-top:4px">
+      <div class="control-row" style="margin-top:4px" data-tooltip="Half-width of the shell band. At 170 the full sphere is visible">
         <label>Thickness</label>
-        <input type="range" id="shell-thickness" min="1" max="30" step="1" value="10" oninput="updateShellThicknessLabel()" />
+        <input type="range" id="shell-thickness" min="1" max="170" step="1" value="10" oninput="updateShellThicknessLabel()" />
         <span class="value-label" id="shell-thickness-val">10&deg;</span>
       </div>
     </div>
@@ -582,7 +613,7 @@
 
     <!-- Octant controls -->
     <div>
-      <div class="section-label">Octant controls</div>
+      <div class="section-label" data-tooltip="Toggle visibility of each sign-combination octant">Octant controls</div>
 
       <div class="control-row" style="margin-bottom:8px;gap:4px">
         <button class="octant-btn" onclick="showAllOctants()">Show All</button>
@@ -1599,17 +1630,30 @@ function toggleInvertColormap() {
 
 // ─── Control handlers ─────────────────────────────────────────────────────────
 
+// Log-scale mapping: slider [0,1] → value [min, max] via exponential curve
+const PSIZE_LOG_MIN = 0.5, PSIZE_LOG_MAX = 15;
+const PSIZE_LOG_RATIO = PSIZE_LOG_MAX / PSIZE_LOG_MIN;
+function pointSizeFromSlider(t) { return PSIZE_LOG_MIN * Math.pow(PSIZE_LOG_RATIO, t); }
+function sliderFromPointSize(v) { return Math.log(v / PSIZE_LOG_MIN) / Math.log(PSIZE_LOG_RATIO); }
+
+const OPACITY_LOG_MIN = 0.01, OPACITY_LOG_MAX = 1.0;
+const OPACITY_LOG_RATIO = OPACITY_LOG_MAX / OPACITY_LOG_MIN;
+function opacityFromSlider(t) { return OPACITY_LOG_MIN * Math.pow(OPACITY_LOG_RATIO, t); }
+function sliderFromOpacity(v) { return Math.log(v / OPACITY_LOG_MIN) / Math.log(OPACITY_LOG_RATIO); }
+
 function updatePointSize() {
-  const val = parseFloat(document.getElementById('point-size').value);
-  document.getElementById('point-size-val').textContent = val;
+  const t = parseFloat(document.getElementById('point-size').value);
+  const val = pointSizeFromSlider(t);
+  document.getElementById('point-size-val').textContent = val.toFixed(1);
   if (state.points) {
     state.points.material.uniforms.pointScale.value = val * 0.013;
   }
 }
 
 function updateOpacity() {
-  const val = parseFloat(document.getElementById('opacity').value);
-  document.getElementById('opacity-val').textContent = val.toFixed(2);
+  const t = parseFloat(document.getElementById('opacity').value);
+  const val = opacityFromSlider(t);
+  document.getElementById('opacity-val').textContent = val.toFixed(3);
   if (state.points) {
     state.points.material.uniforms.uOpacity.value = val;
   }
@@ -1790,14 +1834,16 @@ function applyConfig() {
   }
   if (d.backend) document.getElementById('backend-select').value = d.backend;
 
-  // Rendering controls
+  // Rendering controls (log-scaled sliders: convert real values to slider positions)
   if (r.pointSize != null) {
-    document.getElementById('point-size').value = r.pointSize;
-    document.getElementById('point-size-val').textContent = r.pointSize;
+    const sliderPos = sliderFromPointSize(Math.max(PSIZE_LOG_MIN, Math.min(PSIZE_LOG_MAX, r.pointSize)));
+    document.getElementById('point-size').value = sliderPos;
+    document.getElementById('point-size-val').textContent = r.pointSize.toFixed(1);
   }
   if (r.opacity != null) {
-    document.getElementById('opacity').value = r.opacity;
-    document.getElementById('opacity-val').textContent = r.opacity;
+    const sliderPos = sliderFromOpacity(Math.max(OPACITY_LOG_MIN, Math.min(OPACITY_LOG_MAX, r.opacity)));
+    document.getElementById('opacity').value = sliderPos;
+    document.getElementById('opacity-val').textContent = r.opacity.toFixed(3);
   }
   if (r.colormap) document.getElementById('colormap-select').value = r.colormap;
 
