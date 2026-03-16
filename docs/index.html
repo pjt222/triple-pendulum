@@ -1420,14 +1420,9 @@ function applyFilters() {
   mask1.z = document.getElementById('octant-7').checked ? 1.0 : 0.0;
   mask1.w = document.getElementById('octant-8').checked ? 1.0 : 0.0;
 
-  // Stats counting (read-only CPU loop, debounced for large datasets)
+  // Stats counting (read-only CPU loop, always deferred to avoid blocking render)
   if (statsTimerId) clearTimeout(statsTimerId);
-  const delay = state.pointCount > 10_000_000 ? 200 : 0;
-  if (delay > 0) {
-    statsTimerId = setTimeout(countVisiblePoints, delay);
-  } else {
-    countVisiblePoints();
-  }
+  statsTimerId = setTimeout(countVisiblePoints, state.pointCount > 10_000_000 ? 200 : 16);
 }
 
 function countVisiblePoints() {
@@ -1560,14 +1555,16 @@ function changeRealm() {
   document.getElementById('sphere-slice-controls').style.display = realm === 'sphere' ? '' : 'none';
 
   const backend = backendSelect.value;
-  populateResolutionSelect(realm, backend);
+  const currentResolution = getSelectedEntry()?.resolution;
+  populateResolutionSelect(realm, backend, currentResolution);
   reloadDataset();
 }
 
 function changeBackend() {
   const realm = document.getElementById('realm-select').value;
   const backend = document.getElementById('backend-select').value;
-  populateResolutionSelect(realm, backend);
+  const currentResolution = getSelectedEntry()?.resolution;
+  populateResolutionSelect(realm, backend, currentResolution);
   reloadDataset();
 }
 
