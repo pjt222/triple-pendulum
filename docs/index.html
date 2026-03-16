@@ -535,6 +535,10 @@
         <label>Show axes</label>
         <input type="checkbox" id="show-axes" checked onchange="toggleAxes()" />
       </div>
+      <div class="control-row" style="margin-top:4px" data-tooltip="Show wireframe grid outline (cube or sphere boundary)">
+        <label>Show grid</label>
+        <input type="checkbox" id="show-grid" onchange="toggleGrid()" />
+      </div>
       <div class="control-row" style="margin-top:4px" data-tooltip="Continuously rotate the camera around the center">
         <label>Auto-rotate</label>
         <input type="checkbox" id="auto-rotate" onchange="toggleAutoRotate()" />
@@ -1721,6 +1725,12 @@ function toggleAxes() {
   if (state.axesHelper) state.axesHelper.visible = document.getElementById('show-axes').checked;
 }
 
+function toggleGrid() {
+  if (state.realmOverlay) {
+    state.realmOverlay.visible = document.getElementById('show-grid').checked;
+  }
+}
+
 function updateRealmOverlay() {
   // Remove existing overlay
   if (state.realmOverlay) {
@@ -1729,17 +1739,19 @@ function updateRealmOverlay() {
     state.realmOverlay.material.dispose();
     state.realmOverlay = null;
   }
+  const overlayMat = new THREE.MeshBasicMaterial({
+    color: 0x00f0ff,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.08,
+  });
   if (state.realm === 'sphere') {
-    const sphereGeo = new THREE.SphereGeometry(1, 32, 24);
-    const sphereMat = new THREE.MeshBasicMaterial({
-      color: 0x00f0ff,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.08,
-    });
-    state.realmOverlay = new THREE.Mesh(sphereGeo, sphereMat);
-    state.scene.add(state.realmOverlay);
+    state.realmOverlay = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 24), overlayMat);
+  } else {
+    state.realmOverlay = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), overlayMat);
   }
+  state.realmOverlay.visible = document.getElementById('show-grid').checked;
+  state.scene.add(state.realmOverlay);
 }
 
 function updateShellLabel() {
