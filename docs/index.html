@@ -1261,7 +1261,7 @@ const FRAG_SHADER = `
     if (vVisible < 0.5) discard;
 
     float t = clamp(vNormalizedTime, 0.0, 1.0);
-    t = mix(t, 0.02, vIsStable);
+    t = mix(t, 0.98, vIsStable);
     t = mix(t, 1.0 - t, invertColormap);
 
     vec4 color = texture2D(colormapTexture, vec2(t, 0.5));
