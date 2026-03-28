@@ -91,12 +91,14 @@ def save_results_json(
     total_points = int(flat_flip_times.size)
     finite_mask = np.isfinite(flat_flip_times)
     total_flipped = int(finite_mask.sum())
+    flip_time_max = float(flat_flip_times[finite_mask].max()) if total_flipped > 0 else 0.0
 
     # Build metadata, filling in automatic fields.
     combined_metadata: dict[str, Any] = dict(metadata) if metadata else {}
     combined_metadata.setdefault("date", datetime.now(timezone.utc).isoformat())
     combined_metadata["total_points"] = total_points
     combined_metadata["total_flipped"] = total_flipped
+    combined_metadata["flip_time_max"] = flip_time_max
 
     # Prepare positions list (sphere only).
     positions_list: list[float] | None = None
@@ -226,6 +228,7 @@ def save_results_binary(
     total_points = int(flat_flip_times.size)
     finite_mask = np.isfinite(flat_flip_times)
     total_flipped = int(finite_mask.sum())
+    flip_time_max = float(flat_flip_times[finite_mask].max()) if total_flipped > 0 else 0.0
 
     # Write the raw binary data as little-endian float32.
     # NaN values are preserved natively in IEEE 754 float32.
@@ -237,6 +240,7 @@ def save_results_binary(
     combined_metadata.setdefault("date", datetime.now(timezone.utc).isoformat())
     combined_metadata["total_points"] = total_points
     combined_metadata["total_flipped"] = total_flipped
+    combined_metadata["flip_time_max"] = flip_time_max
 
     sidecar_document: dict[str, Any] = {
         "grid_size": grid_size,

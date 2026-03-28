@@ -700,9 +700,103 @@ const state = {
   geometry: null,
   realmOverlay: null,    // sphere wireframe overlay
   // Per-point cache (computed once from raw data)
-  positions: null,       // Float32Array totalPoints * 3
+  positions: null,       // Float32Array totalPoints * 3 (sphere only; cube uses shader)
   isStable: null,        // Float32Array totalPoints (0.0 or 1.0, for GPU attribute)
+  // Render-on-demand
+  needsRender: true,     // flag to request a frame redraw
 };
+
+// ─── Stats Web Worker ────────────────────────────────────────────────────────
+// Inline Web Worker for countVisiblePoints — runs off main thread to avoid jank.
+
+const statsWorkerBlob = new Blob([`
+  "use strict";
+  let flipTimes = null;
+  let isStable = null;
+  let positions = null;  // Only used for sphere grids
+  let gridSize = 0;
+  let isCubeGrid = false;
+
+  self.onmessage = function(e) {
+    const msg = e.data;
+    if (msg.type === 'init') {
+      flipTimes = new Float32Array(msg.flipTimes);
+      isStable = new Float32Array(msg.isStable);
+      positions = msg.positions ? new Float32Array(msg.positions) : null;
+      gridSize = msg.gridSize || 0;
+      isCubeGrid = msg.isCubeGrid || false;
+      return;
+    }
+    if (msg.type === 'count') {
+      const { totalPoints, isSphere, timeMin, timeMax, showStable,
+              thetaMin, thetaSpan, sliceEn, sliceCtr, thickness,
+              shellSliceEn, shellRadius, shellThick, rMax, maskArr } = msg;
+
+      let showing = 0;
+      let totalFlipped = 0;
+      const gs = gridSize;
+      const gsm1 = gs > 1 ? gs - 1 : 1;
+
+      for (let idx = 0; idx < totalPoints; idx++) {
+        const stable = isStable[idx] > 0.5;
+        const ft = flipTimes[idx];
+        if (!stable) totalFlipped++;
+
+        let visible = true;
+
+        // Compute position: cube from index, sphere from positions array
+        let nx, ny, nz;
+        if (isCubeGrid) {
+          const iz = (idx / (gs * gs)) | 0;
+          const rem = idx - iz * gs * gs;
+          const iy = (rem / gs) | 0;
+          const ix = rem - iy * gs;
+          nx = ix / gsm1 * 2 - 1;
+          ny = iy / gsm1 * 2 - 1;
+          nz = iz / gsm1 * 2 - 1;
+        } else {
+          nx = positions ? positions[idx * 3] : 0;
+          ny = positions ? positions[idx * 3 + 1] : 0;
+          nz = positions ? positions[idx * 3 + 2] : 0;
+        }
+
+        const octantIndex = (nx >= 0 ? 0 : 4) + (ny >= 0 ? 0 : 2) + (nz >= 0 ? 0 : 1);
+        if (maskArr[octantIndex] < 0.5) visible = false;
+
+        // Spatial
+        if (visible && isSphere) {
+          if (shellSliceEn) {
+            const r = Math.sqrt(nx * nx + ny * ny + nz * nz) * rMax;
+            if (Math.abs(r - shellRadius) > shellThick) visible = false;
+          }
+        } else if (visible && !isSphere) {
+          const t1 = thetaMin + (nx + 1) / 2 * thetaSpan;
+          const t2 = thetaMin + (ny + 1) / 2 * thetaSpan;
+          const t3 = thetaMin + (nz + 1) / 2 * thetaSpan;
+          if (sliceEn[0] > 0.5 && Math.abs(t1 - sliceCtr[0]) > thickness) visible = false;
+          if (visible && sliceEn[1] > 0.5 && Math.abs(t2 - sliceCtr[1]) > thickness) visible = false;
+          if (visible && sliceEn[2] > 0.5 && Math.abs(t3 - sliceCtr[2]) > thickness) visible = false;
+        }
+
+        // Time + stability
+        if (visible) {
+          if (stable) {
+            if (!showStable) visible = false;
+          } else {
+            if (ft < timeMin || ft > timeMax) visible = false;
+          }
+        }
+
+        if (visible) showing++;
+      }
+
+      self.postMessage({ showing, total: totalPoints, totalFlipped });
+    }
+  };
+`], { type: 'application/javascript' });
+
+const statsWorkerUrl = URL.createObjectURL(statsWorkerBlob);
+const statsWorker = new Worker(statsWorkerUrl);
 
 // ─── Colormaps ───────────────────────────────────────────────────────────────
 
@@ -1007,9 +1101,10 @@ async function loadData() {
 
 async function loadBinaryData(binPath) {
   // Fetch the raw binary data and the metadata sidecar in parallel.
+  // Try gzip-compressed version first for smaller transfer size.
   const metaPath = binPath + '.meta.json';
   const [binRes, metaRes] = await Promise.all([
-    fetch(binPath),
+    fetchBinary(binPath),
     fetch(metaPath),
   ]);
   if (!binRes.ok) throw new Error(`Binary HTTP ${binRes.status}`);
@@ -1028,11 +1123,14 @@ async function loadBinaryData(binPath) {
   const thetaRange = meta.theta_range || [-170, 170];
   const totalPoints = flipTimes.length;
 
-  // Find tMax from the data.
-  let tMax = 0;
-  for (let i = 0; i < totalPoints; i++) {
-    const v = flipTimes[i];
-    if (isFinite(v) && v > tMax) tMax = v;
+  // Use tMax from metadata if available (avoids O(n) scan).
+  // Fall back to scanning the data if not present in metadata.
+  let tMax = meta.metadata?.flip_time_max ?? meta.flip_time_max ?? 0;
+  if (tMax <= 0) {
+    for (let i = 0; i < totalPoints; i++) {
+      const v = flipTimes[i];
+      if (isFinite(v) && v > tMax) tMax = v;
+    }
   }
 
   return {
@@ -1044,6 +1142,29 @@ async function loadBinaryData(binPath) {
     tMax,
     explicitPositions: null,  // Binary format omits positions; viewer reconstructs.
   };
+}
+
+// Fetch binary data with optional gzip decompression.
+// Tries .bin.gz first (if DecompressionStream is available), falls back to .bin.
+async function fetchBinary(binPath) {
+  if (typeof DecompressionStream !== 'undefined') {
+    try {
+      const gzRes = await fetch(binPath + '.gz');
+      if (gzRes.ok) {
+        const ds = new DecompressionStream('gzip');
+        const decompressedStream = gzRes.body.pipeThrough(ds);
+        const decompressedResponse = new Response(decompressedStream);
+        // Return a Response-like object with .ok and .arrayBuffer()
+        return {
+          ok: true,
+          arrayBuffer: () => decompressedResponse.arrayBuffer(),
+        };
+      }
+    } catch (_) {
+      // .gz not available or decompression failed, fall back
+    }
+  }
+  return fetch(binPath);
 }
 
 function parseSimData(json) {
@@ -1060,19 +1181,23 @@ function parseSimData(json) {
 
   const flipTimes = new Float32Array(totalPoints);
   flipTimes.fill(NaN);
-  let tMax = 0;
+
+  // Use precomputed tMax from metadata if available (avoids O(n) scan).
+  let tMax = json.metadata?.flip_time_max ?? 0;
 
   if (json.flip_times) {
     const raw = json.flip_times;
     const count = Math.min(raw.length, totalPoints);
+    const needScan = (tMax <= 0);
     for (let i = 0; i < count; i++) {
       const v = raw[i];
       flipTimes[i] = (v === null || v === undefined || !isFinite(v)) ? NaN : v;
-      if (isFinite(flipTimes[i]) && flipTimes[i] > tMax) tMax = flipTimes[i];
+      if (needScan && isFinite(flipTimes[i]) && flipTimes[i] > tMax) tMax = flipTimes[i];
     }
   } else if (json.points) {
     // Format B: sparse array of {theta: [t1,t2,t3], flip_time: f} (cube only)
     const step = (thetaMax - thetaMin) / (gridSize - 1);
+    const needScan = (tMax <= 0);
     for (const pt of json.points) {
       const i0 = Math.round((pt.theta[0] - thetaMin) / step);
       const i1 = Math.round((pt.theta[1] - thetaMin) / step);
@@ -1080,7 +1205,7 @@ function parseSimData(json) {
       const idx = i0 * gridSize * gridSize + i1 * gridSize + i2;
       if (idx >= 0 && idx < totalPoints) {
         flipTimes[idx] = pt.flip_time;
-        if (pt.flip_time > tMax) tMax = pt.flip_time;
+        if (needScan && pt.flip_time > tMax) tMax = pt.flip_time;
       }
     }
   }
@@ -1138,6 +1263,9 @@ function initThree() {
   state.controls.minDistance = 0.5;
   state.controls.maxDistance = 10;
 
+  // Render on demand: flag a redraw when the user interacts with the scene.
+  state.controls.addEventListener('change', () => { state.needsRender = true; });
+
   // Subtle axis helper
   state.axesHelper = new THREE.AxesHelper(1.2);
   state.axesHelper.material.opacity = 0.35;
@@ -1160,6 +1288,7 @@ function onResize() {
     const canvasHeight = state.renderer.domElement.height;
     state.points.material.uniforms.sizeScale.value = 0.5 * canvasHeight * pixelRatio;
   }
+  state.needsRender = true;
 }
 
 // ─── GLSL Shaders ─────────────────────────────────────────────────────────────
@@ -1190,6 +1319,12 @@ const VERT_SHADER = `
   uniform float shellThickness;
   uniform float rMax;
 
+  // Cube position-from-index: avoids uploading a separate positions array.
+  // When useCubeIndex > 0.5, position is computed from vertexIndex + gridSize.
+  uniform float useCubeIndex;
+  uniform float gridSizeF;
+  attribute float vertexIndex;
+
   // Filter: octants (two vec4 to avoid dynamic array indexing in WebGL 1)
   uniform vec4 octantMask0;
   uniform vec4 octantMask1;
@@ -1203,10 +1338,22 @@ const VERT_SHADER = `
     float ft = flipTime;
     float stable = aIsStable;
 
+    // Compute position: for cube grids, derive from flat index to save memory.
+    vec3 pos = position;
+    if (useCubeIndex > 0.5) {
+      float idx = vertexIndex;
+      float gs = gridSizeF;
+      float iz = floor(idx / (gs * gs));
+      float rem = idx - iz * gs * gs;
+      float iy = floor(rem / gs);
+      float ix = rem - iy * gs;
+      pos = vec3(ix, iy, iz) / (gs - 1.0) * 2.0 - 1.0;
+    }
+
     // Octant filtering
-    float sx = step(0.0, position.x);
-    float sy = step(0.0, position.y);
-    float sz = step(0.0, position.z);
+    float sx = step(0.0, pos.x);
+    float sy = step(0.0, pos.y);
+    float sz = step(0.0, pos.z);
     float oIdx = 4.0 * (1.0 - sx) + 2.0 * (1.0 - sy) + (1.0 - sz);
     float omask = 1.0;
     omask = mix(omask, octantMask0.x, step(abs(oIdx - 0.0), 0.5));
@@ -1221,10 +1368,10 @@ const VERT_SHADER = `
 
     // Spatial filtering
     // Sphere: shell slice
-    float r = length(position) * rMax;
+    float r = length(pos) * rMax;
     float shellVis = 1.0 - shellSliceEnabled + shellSliceEnabled * step(abs(r - shellRadius), shellThickness);
     // Cube: axis slices
-    vec3 theta = vec3(thetaMin) + (position + 1.0) / 2.0 * thetaSpan;
+    vec3 theta = vec3(thetaMin) + (pos + 1.0) / 2.0 * thetaSpan;
     vec3 sliceDist = abs(theta - sliceCenter);
     vec3 sliceVis = vec3(1.0) - sliceEnabled + sliceEnabled * step(sliceDist, vec3(sliceThickness));
     float cubeVis = sliceVis.x * sliceVis.y * sliceVis.z;
@@ -1245,7 +1392,7 @@ const VERT_SHADER = `
       gl_Position = vec4(9999.0, 9999.0, 9999.0, 1.0);
       gl_PointSize = 0.0;
     } else {
-      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
       gl_Position = projectionMatrix * mvPosition;
       gl_PointSize = pointScale * (sizeScale / -mvPosition.z);
     }
@@ -1311,25 +1458,28 @@ function buildPointCloud(data) {
   state.gridParams = gridParams;
 
   const totalPoints = flipTimes.length;
-  const positions = new Float32Array(totalPoints * 3);
-  const flipTimeAttr = new Float32Array(totalPoints);
-  const isStableAttr = new Float32Array(totalPoints);
+  const isCube = (gridType !== 'sphere');
+  const useCubeIndex = isCube;  // Cube: compute positions in shader from index
 
-  if (explicitPositions) {
+  // For cube grids, skip the positions array entirely — shader computes from index.
+  // For sphere grids, we still need explicit positions (Fibonacci spiral).
+  let positions;
+  if (useCubeIndex) {
+    // Dummy 1-element array; Three.js requires a position attribute but shader ignores it.
+    positions = new Float32Array(totalPoints * 3);
+    // Leave as zeros — shader overrides via useCubeIndex
+  } else if (explicitPositions) {
+    positions = new Float32Array(totalPoints * 3);
     positions.set(explicitPositions);
-  } else if (gridType === 'sphere' && gridParams) {
+  } else if (gridParams) {
+    positions = new Float32Array(totalPoints * 3);
     reconstructSpherePositions(positions, gridParams);
   } else {
-    for (let idx = 0; idx < totalPoints; idx++) {
-      const ix = idx % gridSize;
-      const iy = Math.floor(idx / gridSize) % gridSize;
-      const iz = Math.floor(idx / (gridSize * gridSize));
-
-      positions[idx * 3 + 0] = (ix / (gridSize - 1)) * 2 - 1;
-      positions[idx * 3 + 1] = (iy / (gridSize - 1)) * 2 - 1;
-      positions[idx * 3 + 2] = (iz / (gridSize - 1)) * 2 - 1;
-    }
+    positions = new Float32Array(totalPoints * 3);
   }
+
+  const flipTimeAttr = new Float32Array(totalPoints);
+  const isStableAttr = new Float32Array(totalPoints);
 
   for (let idx = 0; idx < totalPoints; idx++) {
     const ft = flipTimes[idx];
@@ -1338,15 +1488,34 @@ function buildPointCloud(data) {
     flipTimeAttr[idx] = stable ? 0.0 : ft;
   }
 
-  state.positions = positions;
+  // For cube grids, the worker computes positions from index (no positions array needed).
+  // For sphere grids, pass the explicit positions to the worker.
+  state.positions = useCubeIndex ? null : positions;
   state.isStable = isStableAttr;
   state.pointCount = totalPoints;
+
+  // Send data to the stats worker (transferable copies).
+  statsWorker.postMessage({
+    type: 'init',
+    flipTimes: flipTimes.buffer.slice(0),
+    isStable: isStableAttr.buffer.slice(0),
+    positions: useCubeIndex ? null : positions.buffer.slice(0),
+    gridSize: gridSize,
+    isCubeGrid: useCubeIndex,
+  });
 
   // Build geometry with per-point scalar attributes (GPU does colormap + filtering)
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute('flipTime', new THREE.BufferAttribute(flipTimeAttr, 1));
   geometry.setAttribute('aIsStable', new THREE.BufferAttribute(isStableAttr, 1));
+
+  // For cube grids, add a vertex index attribute so shader can compute position.
+  if (useCubeIndex) {
+    const indexAttr = new Float32Array(totalPoints);
+    for (let i = 0; i < totalPoints; i++) indexAttr[i] = i;
+    geometry.setAttribute('vertexIndex', new THREE.BufferAttribute(indexAttr, 1));
+  }
 
   const colormapTexture = generateColormapTexture(state.currentColormap);
   const isSphere = state.realm === 'sphere';
@@ -1379,6 +1548,8 @@ function buildPointCloud(data) {
       shellRadius: { value: 85.0 },
       shellThickness: { value: 10.0 },
       rMax: { value: rMax },
+      useCubeIndex: { value: useCubeIndex ? 1.0 : 0.0 },
+      gridSizeF: { value: parseFloat(gridSize) },
       octantMask0: { value: new THREE.Vector4(1, 1, 1, 1) },
       octantMask1: { value: new THREE.Vector4(1, 1, 1, 1) },
     },
@@ -1398,6 +1569,7 @@ function buildPointCloud(data) {
   state.points = new THREE.Points(geometry, material);
   state.scene.add(state.points);
 
+  state.needsRender = true;
   return geometry;
 }
 
@@ -1405,6 +1577,12 @@ function buildPointCloud(data) {
 
 // Debounce timer for stats counting on large datasets
 let statsTimerId = null;
+
+// Listen for stats results from the Web Worker.
+statsWorker.onmessage = function(e) {
+  const { showing, total, totalFlipped } = e.data;
+  updateStats(showing, total, totalFlipped);
+};
 
 function applyFilters() {
   if (!state.points) return;
@@ -1455,86 +1633,41 @@ function applyFilters() {
   mask1.z = document.getElementById('octant-7').checked ? 1.0 : 0.0;
   mask1.w = document.getElementById('octant-8').checked ? 1.0 : 0.0;
 
-  // Stats counting (read-only CPU loop, always deferred to avoid blocking render)
+  state.needsRender = true;
+
+  // Dispatch stats counting to the Web Worker (non-blocking).
   if (statsTimerId) clearTimeout(statsTimerId);
-  statsTimerId = setTimeout(countVisiblePoints, state.pointCount > 10_000_000 ? 200 : 16);
+  statsTimerId = setTimeout(dispatchStatsCount, state.pointCount > 10_000_000 ? 200 : 16);
 }
 
-function countVisiblePoints() {
-  const totalPoints = state.pointCount;
-  const flipTimes = state.flipTimes;
-  const isStable = state.isStable;
-  const positions = state.positions;
-  const isSphere = state.realm === 'sphere';
+function dispatchStatsCount() {
+  if (!state.points) return;
   const uniforms = state.points.material.uniforms;
+  const isSphere = state.realm === 'sphere';
 
-  const timeMin = uniforms.timeRange.value.x;
-  const timeMax = uniforms.timeRange.value.y;
-  const showStable = uniforms.showStable.value > 0.5;
-  const thetaMin = state.thetaRange[0];
-  const thetaSpan = state.thetaRange[1] - state.thetaRange[0];
-
-  const sliceEn = uniforms.sliceEnabled.value;
-  const sliceCtr = uniforms.sliceCenter.value;
-  const thickness = uniforms.sliceThickness.value;
-
-  const shellSliceEn = uniforms.shellSliceEnabled.value > 0.5;
-  const shellRadius = uniforms.shellRadius.value;
-  const shellThick = uniforms.shellThickness.value;
-  const rMax = uniforms.rMax.value;
-
-  const maskArr = [
-    uniforms.octantMask0.value.x, uniforms.octantMask0.value.y,
-    uniforms.octantMask0.value.z, uniforms.octantMask0.value.w,
-    uniforms.octantMask1.value.x, uniforms.octantMask1.value.y,
-    uniforms.octantMask1.value.z, uniforms.octantMask1.value.w,
-  ];
-
-  let showing = 0;
-  let totalFlipped = 0;
-
-  for (let idx = 0; idx < totalPoints; idx++) {
-    const stable = isStable[idx] > 0.5;
-    const ft = flipTimes[idx];
-    if (!stable) totalFlipped++;
-
-    let visible = true;
-
-    // Octant
-    const nx = positions[idx * 3];
-    const ny = positions[idx * 3 + 1];
-    const nz = positions[idx * 3 + 2];
-    const octantIndex = (nx >= 0 ? 0 : 4) + (ny >= 0 ? 0 : 2) + (nz >= 0 ? 0 : 1);
-    if (maskArr[octantIndex] < 0.5) visible = false;
-
-    // Spatial
-    if (visible && isSphere) {
-      if (shellSliceEn) {
-        const r = Math.sqrt(nx * nx + ny * ny + nz * nz) * rMax;
-        if (Math.abs(r - shellRadius) > shellThick) visible = false;
-      }
-    } else if (visible && !isSphere) {
-      const t1 = thetaMin + (nx + 1) / 2 * thetaSpan;
-      const t2 = thetaMin + (ny + 1) / 2 * thetaSpan;
-      const t3 = thetaMin + (nz + 1) / 2 * thetaSpan;
-      if (sliceEn.x > 0.5 && Math.abs(t1 - sliceCtr.x) > thickness) visible = false;
-      if (visible && sliceEn.y > 0.5 && Math.abs(t2 - sliceCtr.y) > thickness) visible = false;
-      if (visible && sliceEn.z > 0.5 && Math.abs(t3 - sliceCtr.z) > thickness) visible = false;
-    }
-
-    // Time + stability
-    if (visible) {
-      if (stable) {
-        if (!showStable) visible = false;
-      } else {
-        if (ft < timeMin || ft > timeMax) visible = false;
-      }
-    }
-
-    if (visible) showing++;
-  }
-
-  updateStats(showing, totalPoints, totalFlipped);
+  statsWorker.postMessage({
+    type: 'count',
+    totalPoints: state.pointCount,
+    isSphere,
+    timeMin: uniforms.timeRange.value.x,
+    timeMax: uniforms.timeRange.value.y,
+    showStable: uniforms.showStable.value > 0.5,
+    thetaMin: state.thetaRange[0],
+    thetaSpan: state.thetaRange[1] - state.thetaRange[0],
+    sliceEn: [uniforms.sliceEnabled.value.x, uniforms.sliceEnabled.value.y, uniforms.sliceEnabled.value.z],
+    sliceCtr: [uniforms.sliceCenter.value.x, uniforms.sliceCenter.value.y, uniforms.sliceCenter.value.z],
+    thickness: uniforms.sliceThickness.value,
+    shellSliceEn: uniforms.shellSliceEnabled.value > 0.5,
+    shellRadius: uniforms.shellRadius.value,
+    shellThick: uniforms.shellThickness.value,
+    rMax: uniforms.rMax.value,
+    maskArr: [
+      uniforms.octantMask0.value.x, uniforms.octantMask0.value.y,
+      uniforms.octantMask0.value.z, uniforms.octantMask0.value.w,
+      uniforms.octantMask1.value.x, uniforms.octantMask1.value.y,
+      uniforms.octantMask1.value.z, uniforms.octantMask1.value.w,
+    ],
+  });
 }
 
 function updateStats(showing, total, totalFlipped) {
@@ -1619,6 +1752,7 @@ function changeColormap() {
     if (oldTexture) oldTexture.dispose();
   }
   drawLegend();
+  state.needsRender = true;
 }
 
 function toggleInvertColormap() {
@@ -1630,6 +1764,7 @@ function toggleInvertColormap() {
     state.points.material.uniforms.invertColormap.value = state.invertColormap ? 1.0 : 0.0;
   }
   drawLegend();
+  state.needsRender = true;
 }
 
 // ─── Control handlers ─────────────────────────────────────────────────────────
@@ -1652,6 +1787,7 @@ function updatePointSize() {
   if (state.points) {
     state.points.material.uniforms.pointScale.value = val * 0.013;
   }
+  state.needsRender = true;
 }
 
 function updateOpacity() {
@@ -1661,6 +1797,7 @@ function updateOpacity() {
   if (state.points) {
     state.points.material.uniforms.uOpacity.value = val;
   }
+  state.needsRender = true;
 }
 
 function updateTimeFilter() {
@@ -1713,6 +1850,7 @@ function hideAllOctants() {
 function toggleAutoRotate() {
   state.controls.autoRotate = document.getElementById('auto-rotate').checked;
   state.controls.autoRotateSpeed = parseFloat(document.getElementById('rotate-speed').value);
+  state.needsRender = true;
 }
 
 function updateRotateSpeed() {
@@ -1723,12 +1861,14 @@ function updateRotateSpeed() {
 
 function toggleAxes() {
   if (state.axesHelper) state.axesHelper.visible = document.getElementById('show-axes').checked;
+  state.needsRender = true;
 }
 
 function toggleGrid() {
   if (state.realmOverlay) {
     state.realmOverlay.visible = document.getElementById('show-grid').checked;
   }
+  state.needsRender = true;
 }
 
 function updateRealmOverlay() {
@@ -1803,8 +1943,13 @@ window.changeResolution = changeResolution;
 
 function animate() {
   requestAnimationFrame(animate);
-  state.controls.update();
-  state.renderer.render(state.scene, state.camera);
+  // OrbitControls.update() returns true when damping is still active.
+  const controlsActive = state.controls.update();
+  // Render only when something changed: user interaction, auto-rotate, or explicit request.
+  if (state.needsRender || controlsActive || state.controls.autoRotate) {
+    state.renderer.render(state.scene, state.camera);
+    state.needsRender = false;
+  }
 }
 
 // ─── Initialise time-range sliders from real data ────────────────────────────
