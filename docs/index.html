@@ -728,6 +728,7 @@ const statsWorkerBlob = new Blob([`
       return;
     }
     if (msg.type === 'count') {
+      if (!flipTimes) return;  // not yet initialized
       const { totalPoints, isSphere, timeMin, timeMax, showStable,
               thetaMin, thetaSpan, sliceEn, sliceCtr, thickness,
               shellSliceEn, shellRadius, shellThick, rMax, maskArr } = msg;
@@ -1153,12 +1154,7 @@ async function fetchBinary(binPath) {
       if (gzRes.ok) {
         const ds = new DecompressionStream('gzip');
         const decompressedStream = gzRes.body.pipeThrough(ds);
-        const decompressedResponse = new Response(decompressedStream);
-        // Return a Response-like object with .ok and .arrayBuffer()
-        return {
-          ok: true,
-          arrayBuffer: () => decompressedResponse.arrayBuffer(),
-        };
+        return new Response(decompressedStream);
       }
     } catch (_) {
       // .gz not available or decompression failed, fall back
@@ -1319,11 +1315,10 @@ const VERT_SHADER = `
   uniform float shellThickness;
   uniform float rMax;
 
-  // Cube position-from-index: avoids uploading a separate positions array.
-  // When useCubeIndex > 0.5, position is computed from vertexIndex + gridSize.
+  // Cube position-from-index: position attribute holds vertex index (itemSize 1).
+  // When useCubeIndex > 0.5, 3D position is computed from position.x + gridSizeF.
   uniform float useCubeIndex;
   uniform float gridSizeF;
-  attribute float vertexIndex;
 
   // Filter: octants (two vec4 to avoid dynamic array indexing in WebGL 1)
   uniform vec4 octantMask0;
@@ -1341,7 +1336,7 @@ const VERT_SHADER = `
     // Compute position: for cube grids, derive from flat index to save memory.
     vec3 pos = position;
     if (useCubeIndex > 0.5) {
-      float idx = vertexIndex;
+      float idx = position.x;
       float gs = gridSizeF;
       float iz = floor(idx / (gs * gs));
       float rem = idx - iz * gs * gs;
@@ -1465,9 +1460,10 @@ function buildPointCloud(data) {
   // For sphere grids, we still need explicit positions (Fibonacci spiral).
   let positions;
   if (useCubeIndex) {
-    // Dummy 1-element array; Three.js requires a position attribute but shader ignores it.
-    positions = new Float32Array(totalPoints * 3);
-    // Leave as zeros — shader overrides via useCubeIndex
+    // Cube grids: single-component position = vertex index. Shader computes 3D pos.
+    // Saves 3x memory vs Float32Array(totalPoints * 3) — 256MB vs 768MB at 64M pts.
+    positions = new Float32Array(totalPoints);
+    for (let i = 0; i < totalPoints; i++) positions[i] = i;
   } else if (explicitPositions) {
     positions = new Float32Array(totalPoints * 3);
     positions.set(explicitPositions);
@@ -1494,28 +1490,28 @@ function buildPointCloud(data) {
   state.isStable = isStableAttr;
   state.pointCount = totalPoints;
 
-  // Send data to the stats worker (transferable copies).
+  // Send data to the stats worker via transferable buffers.
+  // We .slice(0) to copy (originals are used by state/GPU), then transfer
+  // the copies so the main-thread duplicates are detached immediately.
+  const ftBuf = flipTimes.buffer.slice(0);
+  const isBuf = isStableAttr.buffer.slice(0);
+  const posBuf = useCubeIndex ? null : positions.buffer.slice(0);
+  const transferList = [ftBuf, isBuf];
+  if (posBuf) transferList.push(posBuf);
   statsWorker.postMessage({
     type: 'init',
-    flipTimes: flipTimes.buffer.slice(0),
-    isStable: isStableAttr.buffer.slice(0),
-    positions: useCubeIndex ? null : positions.buffer.slice(0),
+    flipTimes: ftBuf,
+    isStable: isBuf,
+    positions: posBuf,
     gridSize: gridSize,
     isCubeGrid: useCubeIndex,
-  });
+  }, transferList);
 
   // Build geometry with per-point scalar attributes (GPU does colormap + filtering)
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, useCubeIndex ? 1 : 3));
   geometry.setAttribute('flipTime', new THREE.BufferAttribute(flipTimeAttr, 1));
   geometry.setAttribute('aIsStable', new THREE.BufferAttribute(isStableAttr, 1));
-
-  // For cube grids, add a vertex index attribute so shader can compute position.
-  if (useCubeIndex) {
-    const indexAttr = new Float32Array(totalPoints);
-    for (let i = 0; i < totalPoints; i++) indexAttr[i] = i;
-    geometry.setAttribute('vertexIndex', new THREE.BufferAttribute(indexAttr, 1));
-  }
 
   const colormapTexture = generateColormapTexture(state.currentColormap);
   const isSphere = state.realm === 'sphere';
@@ -1567,6 +1563,12 @@ function buildPointCloud(data) {
 
   state.geometry = geometry;
   state.points = new THREE.Points(geometry, material);
+  if (useCubeIndex) {
+    // itemSize 1 position produces wrong bounding sphere; disable frustum culling
+    // and pre-set sphere to prevent Three.js auto-computation.
+    state.points.frustumCulled = false;
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 2.0);
+  }
   state.scene.add(state.points);
 
   state.needsRender = true;
@@ -1857,6 +1859,7 @@ function updateRotateSpeed() {
   const val = parseFloat(document.getElementById('rotate-speed').value);
   document.getElementById('rotate-speed-val').textContent = val.toFixed(1);
   state.controls.autoRotateSpeed = val;
+  state.needsRender = true;
 }
 
 function toggleAxes() {
