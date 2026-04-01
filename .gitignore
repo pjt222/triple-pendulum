@@ -33,9 +33,17 @@ node_modules/
 # Project data (large generated files)
 data/
 renders/
+# Un-ignore tracked render assets for README
+!renders/hero.gif
+!renders/slice_gallery_theta3.png
+!renders/slice_sweep_theta3.gif
+!renders/fractal_dimension.png
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Drafts
+drafts/
 
 # Environment
 .env
