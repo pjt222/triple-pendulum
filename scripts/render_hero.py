@@ -29,8 +29,8 @@ RESOLUTION_X = 960
 RESOLUTION_Y = 540
 NUM_FRAMES = 36
 SAMPLES = 48
-CAMERA_DISTANCE = 480
-CAMERA_ELEVATION = 22  # degrees above horizon
+CAMERA_DISTANCE = 880
+CAMERA_ELEVATION = 25  # degrees above horizon
 
 # Cyberpunk colormap stops: (normalized_position, R, G, B)
 CYBERPUNK_STOPS = [
