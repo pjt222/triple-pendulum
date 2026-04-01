@@ -3,11 +3,15 @@
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 **[Live Interactive Viewer](https://huggingface.co/spaces/pjt222/triple-pendulum)** on Hugging Face Spaces
 
-![Rotating isosurface of the triple pendulum chaos boundary](renders/hero.gif)
+<p align="center">
+  <img src="renders/hero.gif" alt="Rotating isosurface of the triple pendulum chaos boundary" width="640" />
+</p>
 
 Map the chaos of a triple pendulum by sweeping all possible starting angles (θ₁, θ₂, θ₃) and measuring how long each configuration takes to flip. All three pendulums start from rest, so the full 6D phase space collapses to a 3D grid of initial conditions -- each voxel colored by its time-to-first-flip. The result is a fractal structure that extends Drew's Campfire's [2D double pendulum chaos maps](https://github.com/drewscampfire/Drew-s-Campfire-Videos) into the third dimension.
 
-![Fractal cross-sections at six θ₃ slices](renders/slice_gallery_theta3.png)
+<p align="center">
+  <img src="renders/slice_gallery_theta3.png" alt="Fractal cross-sections at six θ₃ slices" width="800" />
+</p>
 
 ## Quick Start
 

@@ -27,9 +27,9 @@ FRAME_DIR = PROJECT_ROOT / "renders" / "_frames"
 
 RESOLUTION_X = 960
 RESOLUTION_Y = 540
-NUM_FRAMES = 36
+NUM_FRAMES = 72  # smoother rotation (5 degrees per frame)
 SAMPLES = 48
-CAMERA_DISTANCE = 880
+CAMERA_DISTANCE = 1100  # wide enough to never clip during rotation
 CAMERA_ELEVATION = 25  # degrees above horizon
 
 # Cyberpunk colormap stops: (normalized_position, R, G, B)
@@ -72,33 +72,29 @@ def clear_scene():
 
 
 def apply_vertex_colors(obj):
-    """Color vertices by normalized position (height) using the cyberpunk colormap."""
+    """Color vertices by radial distance from theta-space center.
+
+    Matches the viewer's physics: center (0,0,0) = stable = bright
+    yellow/white, edges = chaotic = dark cyan/purple.
+    """
     mesh = obj.data
+    import math
 
-    # Get bounding box for normalization
-    verts = [v.co for v in mesh.vertices]
-    min_vals = Vector((min(v.x for v in verts), min(v.y for v in verts), min(v.z for v in verts)))
-    max_vals = Vector((max(v.x for v in verts), max(v.y for v in verts), max(v.z for v in verts)))
-    extent = max_vals - min_vals
-    extent = Vector((max(e, 0.001) for e in extent))
+    # Theta space spans -170 to 170; center at origin.
+    # Max radial distance to corner = sqrt(3) * 170 ≈ 294.
+    max_radius = math.sqrt(3) * 170.0
 
-    # Create vertex color layer
     if not mesh.vertex_colors:
         mesh.vertex_colors.new(name="ChaosColor")
     color_layer = mesh.vertex_colors["ChaosColor"]
 
-    # Color each loop vertex based on its normalized position
-    # Use a combination of position axes to get varied coloring
     for poly in mesh.polygons:
         for loop_idx in poly.loop_indices:
             vert_idx = mesh.loops[loop_idx].vertex_index
             co = mesh.vertices[vert_idx].co
-            # Map 3D position to colormap: use radial distance + height mix
-            nx = (co.x - min_vals.x) / extent.x
-            ny = (co.y - min_vals.y) / extent.y
-            nz = (co.z - min_vals.z) / extent.z
-            # Blend of axes for interesting color variation
-            t = 0.3 * nx + 0.3 * ny + 0.4 * nz
+            radius = math.sqrt(co.x ** 2 + co.y ** 2 + co.z ** 2)
+            # Invert: center = 1.0 (bright), edges = 0.0 (dark)
+            t = 1.0 - min(radius / max_radius, 1.0)
             r, g, b = lerp_colormap(t)
             color_layer.data[loop_idx].color = (r, g, b, 1.0)
 
@@ -156,7 +152,7 @@ def import_main_isosurface(level_info: list[dict]):
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.shade_smooth()
 
-    # Apply vertex colors
+    # Apply vertex colors: radial distance from center → cyberpunk colormap
     print("  Applying vertex colors...")
     apply_vertex_colors(obj)
 

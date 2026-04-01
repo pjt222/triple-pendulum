@@ -18,6 +18,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.visualization.volume_render import extract_isosurface, save_mesh_obj
+from src.visualization.volume_render import compute_gradient_magnitude
 
 
 def load_binary_data(resolution: int, data_dir: Path) -> tuple[np.ndarray, dict]:
@@ -55,6 +56,10 @@ def main():
     theta_range = tuple(meta["theta_range"])
     t_max = meta["metadata"]["t_max"]
 
+    # Compute gradient magnitude for vertex coloring
+    print("Computing flip-time gradient magnitude...")
+    gradient_magnitude = compute_gradient_magnitude(flip_times_3d)
+
     # Compute isosurface levels spanning the flip-time range
     finite_times = flip_times_3d[np.isfinite(flip_times_3d)]
     t_min_data = float(np.percentile(finite_times, 5))
@@ -66,6 +71,7 @@ def main():
 
     # Also save level metadata for the Blender script
     level_info = []
+    grid_size = flip_times_3d.shape[0]
 
     for i, level in enumerate(levels):
         try:
@@ -73,12 +79,32 @@ def main():
                                       theta_range=theta_range)
             obj_path = output_dir / f"iso_{i:02d}_{level:.2f}.obj"
             save_mesh_obj(str(obj_path), mesh["vertices"], mesh["faces"])
+
+            # Sample gradient magnitude at each vertex for coloring.
+            # Vertices are in theta-degree space; convert back to grid indices.
+            theta_min, theta_max = theta_range
+            verts = mesh["vertices"]
+            grid_indices = (verts - theta_min) / (theta_max - theta_min) * (grid_size - 1)
+            grid_indices = np.clip(grid_indices, 0, grid_size - 1).astype(int)
+            vertex_gradient = gradient_magnitude[
+                grid_indices[:, 0], grid_indices[:, 1], grid_indices[:, 2]
+            ]
+            # Normalize to [0, 1] using percentiles to avoid outlier blowout
+            g_low = np.percentile(vertex_gradient, 2)
+            g_high = np.percentile(vertex_gradient, 98)
+            vertex_colors_normalized = np.clip(
+                (vertex_gradient - g_low) / max(g_high - g_low, 1e-6), 0, 1
+            )
+            colors_path = output_dir / f"iso_{i:02d}_colors.bin"
+            vertex_colors_normalized.astype(np.float32).tofile(str(colors_path))
+
             normalized_time = (level - levels[0]) / (levels[-1] - levels[0])
             level_info.append({
                 "index": i,
                 "level": float(level),
                 "normalized": float(normalized_time),
                 "obj_file": obj_path.name,
+                "colors_file": colors_path.name,
                 "num_vertices": int(mesh["vertices"].shape[0]),
                 "num_faces": int(mesh["faces"].shape[0]),
             })
