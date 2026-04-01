@@ -38,6 +38,7 @@ renders/
 !renders/slice_gallery_theta3.png
 !renders/slice_sweep_theta3.gif
 !renders/fractal_dimension.png
+!renders/hero_sphere.gif
 
 # Jupyter
 .ipynb_checkpoints/
