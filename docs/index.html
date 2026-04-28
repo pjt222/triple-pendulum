@@ -342,7 +342,7 @@
       opacity: 0.4;
       cursor: not-allowed;
     }
-    .btn--compact { padding: 4px 8px; font-size: 11px; min-height: 24px; }
+    .btn--compact { padding: 4px 10px; font-size: 11px; }
     .btn--toggle[aria-pressed="true"] {
       background: rgba(0, 240, 255, 0.18);
       border-color: var(--text-accent);
@@ -354,6 +354,10 @@
       display: flex;
       gap: 6px;
       align-items: stretch;
+    }
+    .btn-row > .btn,
+    .btn-row > select {
+      min-height: 30px;
     }
 
     .divider {
@@ -549,17 +553,23 @@
     <!-- Stats -->
     <div id="stats" aria-live="polite">Loading...</div>
 
-    <!-- Action toolbar -->
+    <!-- Reset section -->
     <div class="section">
+      <div class="section-label">Reset</div>
       <div class="btn-row">
-        <button type="button" class="btn" id="reset-view" data-tooltip="Reset camera position and zoom">Reset view</button>
-        <button type="button" class="btn" id="reset-filters" data-tooltip="Restore default time, slice, and octant filters">Reset filters</button>
+        <button type="button" class="btn" id="reset-view" data-tooltip="Reset camera position and zoom">View</button>
+        <button type="button" class="btn" id="reset-filters" data-tooltip="Restore default time, slice, and octant filters">Filters</button>
       </div>
+    </div>
+
+    <!-- Save section -->
+    <div class="section">
+      <div class="section-label">Save</div>
       <div class="btn-row" data-tooltip="Save current view as a 1:1 square image with embedded settings">
-        <button type="button" class="btn" id="export-png">Save PNG</button>
-        <button type="button" class="btn" id="export-svg">Save SVG</button>
+        <button type="button" class="btn" id="export-png">PNG</button>
+        <button type="button" class="btn" id="export-svg">SVG</button>
         <label class="visually-hidden" for="export-size">Output size</label>
-        <select id="export-size" class="btn--compact" style="flex:0 0 auto" data-tooltip="Output dimensions (square pixels)">
+        <select id="export-size" style="flex:0 0 80px" data-tooltip="Output dimensions (square pixels)">
           <option value="1024">1024</option>
           <option value="2048" selected>2048</option>
           <option value="4096">4096</option>
