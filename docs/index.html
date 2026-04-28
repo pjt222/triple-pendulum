@@ -439,6 +439,16 @@
       <button id="reset-view" onclick="resetView()" style="flex:1;padding:4px 0;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--bg-panel-border);border-radius:4px;cursor:pointer;">Reset view</button>
     </div>
 
+    <div class="control-row" style="margin-top:6px;gap:4px" data-tooltip="Save current view as a square (1:1) image">
+      <button id="export-png" onclick="exportPNG()" style="flex:1;padding:4px 0;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--bg-panel-border);border-radius:4px;cursor:pointer;">Save PNG</button>
+      <button id="export-svg" onclick="exportSVG()" style="flex:1;padding:4px 0;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--bg-panel-border);border-radius:4px;cursor:pointer;">Save SVG</button>
+      <select id="export-size" style="flex:0 0 auto;padding:3px 4px;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--bg-panel-border);border-radius:4px;" data-tooltip="Output dimensions (square)">
+        <option value="1024">1024</option>
+        <option value="2048" selected>2048</option>
+        <option value="4096">4096</option>
+      </select>
+    </div>
+
     <hr class="divider" />
 
     <!-- Dataset -->
@@ -1248,7 +1258,7 @@ function initThree() {
   state.camera = new THREE.PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.001, 100);
   state.camera.position.set(2.2, 1.6, 2.2);
 
-  state.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+  state.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: true });
   state.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   state.renderer.setSize(container.clientWidth, container.clientHeight);
   container.appendChild(state.renderer.domElement);
@@ -1919,6 +1929,236 @@ function resetView() {
   state.controls.update();
 }
 
+// ─── Export (PNG / SVG, 1:1) ──────────────────────────────────────────────────
+
+function collectExportMetadata() {
+  const $ = (id) => document.getElementById(id);
+  const num = (id) => parseFloat($(id).value);
+  const bool = (id) => $(id).checked;
+  const cam = state.camera;
+  const tgt = state.controls.target;
+  const meta = {
+    app: 'Triple Pendulum 3D Chaos Voxel Map',
+    url: location.href,
+    timestamp: new Date().toISOString(),
+    dataset: {
+      realm: $('realm-select').value,
+      backend: $('backend-select').value,
+      resolution: parseInt($('resolution-select').value),
+    },
+    colormap: {
+      name: $('colormap-select').value,
+      inverted: state.invertColormap === true,
+    },
+    rendering: {
+      pointSize: num('point-size'),
+      opacity: num('opacity'),
+      timeMin: num('time-min'),
+      timeMax: num('time-max'),
+      showStable: bool('show-stable'),
+      showAxes: bool('show-axes'),
+      showGrid: bool('show-grid'),
+      autoRotate: bool('auto-rotate'),
+      rotateSpeed: num('rotate-speed'),
+    },
+    slice: {
+      thickness: num('slice-thickness'),
+      x: { enabled: bool('slice-x-en'), value: num('slice-x') },
+      y: { enabled: bool('slice-y-en'), value: num('slice-y') },
+      z: { enabled: bool('slice-z-en'), value: num('slice-z') },
+    },
+    shell: {
+      enabled: bool('shell-slice-en'),
+      radius: num('shell-radius'),
+      thickness: num('shell-thickness'),
+    },
+    octants: [1,2,3,4,5,6,7,8].map(i => bool('octant-' + i)),
+    camera: {
+      position: [cam.position.x, cam.position.y, cam.position.z],
+      target: [tgt.x, tgt.y, tgt.z],
+      fov: cam.fov,
+    },
+  };
+  return meta;
+}
+
+function buildExportFilename(ext) {
+  const m = collectExportMetadata();
+  const ts = m.timestamp.replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+  return `triple_pendulum_${m.dataset.realm}_${m.dataset.backend}_n${m.dataset.resolution}_${ts}.${ext}`;
+}
+
+// Render scene at NxN into the renderer canvas, return data URL (PNG).
+function renderSquare(size) {
+  const renderer = state.renderer;
+  const camera = state.camera;
+  const points = state.points;
+  const container = document.getElementById('canvas-container');
+
+  const prevW = container.clientWidth;
+  const prevH = container.clientHeight;
+  const prevAspect = camera.aspect;
+  const prevPixelRatio = renderer.getPixelRatio();
+  const prevSizeScale = points ? points.material.uniforms.sizeScale.value : null;
+
+  // Force pixel ratio = 1 so size = canvas pixel dims exactly
+  renderer.setPixelRatio(1);
+  renderer.setSize(size, size, false);
+  camera.aspect = 1;
+  camera.updateProjectionMatrix();
+
+  if (points) {
+    points.material.uniforms.sizeScale.value = 0.5 * size;
+  }
+
+  renderer.render(state.scene, camera);
+  const dataUrl = renderer.domElement.toDataURL('image/png');
+
+  // Restore
+  renderer.setPixelRatio(prevPixelRatio);
+  renderer.setSize(prevW, prevH, false);
+  camera.aspect = prevAspect;
+  camera.updateProjectionMatrix();
+  if (points && prevSizeScale != null) {
+    points.material.uniforms.sizeScale.value = prevSizeScale;
+  }
+  state.needsRender = true;
+
+  return dataUrl;
+}
+
+function dataUrlToUint8(dataUrl) {
+  const b64 = dataUrl.split(',')[1];
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// CRC32 for PNG chunks (table-based)
+const PNG_CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = PNG_CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+// Build a tEXt chunk: 4B length, 4B 'tEXt', keyword\0text, 4B CRC
+function buildTextChunk(keyword, text) {
+  const data = new TextEncoder().encode(keyword + '\0' + text);
+  const type = new Uint8Array([0x74, 0x45, 0x58, 0x74]); // 'tEXt'
+  const chunk = new Uint8Array(4 + 4 + data.length + 4);
+  const dv = new DataView(chunk.buffer);
+  dv.setUint32(0, data.length, false);
+  chunk.set(type, 4);
+  chunk.set(data, 8);
+  const crcInput = new Uint8Array(4 + data.length);
+  crcInput.set(type, 0);
+  crcInput.set(data, 4);
+  dv.setUint32(8 + data.length, crc32(crcInput), false);
+  return chunk;
+}
+
+// Insert tEXt chunks into a PNG byte array (after IHDR, before IDAT)
+function injectPngText(pngBytes, entries) {
+  // PNG signature 8 bytes; first chunk is IHDR (length 13 + 12 overhead = 25)
+  // We insert immediately after IHDR.
+  const sigEnd = 8;
+  const ihdrLen = (pngBytes[sigEnd] << 24) | (pngBytes[sigEnd+1] << 16) | (pngBytes[sigEnd+2] << 8) | pngBytes[sigEnd+3];
+  const ihdrEnd = sigEnd + 4 + 4 + ihdrLen + 4; // length + type + data + crc
+  const head = pngBytes.slice(0, ihdrEnd);
+  const tail = pngBytes.slice(ihdrEnd);
+  const chunks = entries.map(([k, v]) => buildTextChunk(k, v));
+  let total = head.length + tail.length;
+  for (const c of chunks) total += c.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  out.set(head, off); off += head.length;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  out.set(tail, off);
+  return out;
+}
+
+function metadataToTextEntries(meta) {
+  // PNG tEXt keywords are <=79 chars, latin-1 only. Use safe ASCII keys.
+  const flat = {};
+  flat['Title'] = 'Triple Pendulum 3D Chaos Voxel Map';
+  flat['Software'] = meta.app;
+  flat['Source'] = meta.url;
+  flat['CreationTime'] = meta.timestamp;
+  flat['Realm'] = meta.dataset.realm;
+  flat['Backend'] = meta.dataset.backend;
+  flat['Resolution'] = String(meta.dataset.resolution);
+  flat['Colormap'] = meta.colormap.name + (meta.colormap.inverted ? ' (inverted)' : '');
+  flat['PointSize'] = String(meta.rendering.pointSize);
+  flat['Opacity'] = String(meta.rendering.opacity);
+  flat['TimeRange'] = meta.rendering.timeMin + '..' + meta.rendering.timeMax;
+  flat['Slices'] = ['x','y','z'].map(a => meta.slice[a].enabled ? `${a}=${meta.slice[a].value}` : '').filter(Boolean).join(',') || 'none';
+  flat['SliceThickness'] = String(meta.slice.thickness);
+  flat['Shell'] = meta.shell.enabled ? `r=${meta.shell.radius} thk=${meta.shell.thickness}` : 'off';
+  flat['Octants'] = meta.octants.map(b => b ? '1' : '0').join('');
+  flat['Camera'] = `pos=[${meta.camera.position.map(v => v.toFixed(4)).join(',')}] tgt=[${meta.camera.target.map(v => v.toFixed(4)).join(',')}] fov=${meta.camera.fov}`;
+  flat['JSON'] = JSON.stringify(meta);
+  return Object.entries(flat);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportPNG() {
+  const size = parseInt(document.getElementById('export-size').value) || 2048;
+  const meta = collectExportMetadata();
+  const dataUrl = renderSquare(size);
+  const raw = dataUrlToUint8(dataUrl);
+  const withMeta = injectPngText(raw, metadataToTextEntries(meta));
+  downloadBlob(new Blob([withMeta], { type: 'image/png' }), buildExportFilename('png'));
+}
+
+function escapeXml(s) {
+  return String(s).replace(/[<>&'"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;',"'":'&apos;','"':'&quot;'}[c]));
+}
+
+function exportSVG() {
+  const size = parseInt(document.getElementById('export-size').value) || 2048;
+  const meta = collectExportMetadata();
+  const dataUrl = renderSquare(size);
+  const metaJson = escapeXml(JSON.stringify(meta, null, 2));
+  const dataAttrs = [
+    `data-realm="${escapeXml(meta.dataset.realm)}"`,
+    `data-backend="${escapeXml(meta.dataset.backend)}"`,
+    `data-resolution="${meta.dataset.resolution}"`,
+    `data-colormap="${escapeXml(meta.colormap.name)}"`,
+    `data-inverted="${meta.colormap.inverted}"`,
+    `data-timestamp="${escapeXml(meta.timestamp)}"`,
+  ].join(' ');
+  const svg =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+    `width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" ${dataAttrs}>\n` +
+    `  <title>Triple Pendulum 3D Chaos — ${escapeXml(meta.dataset.realm)} N=${meta.dataset.resolution}</title>\n` +
+    `  <desc>Square (1:1) export. See &lt;metadata&gt; for full settings JSON.</desc>\n` +
+    `  <metadata><![CDATA[\n${metaJson}\n]]></metadata>\n` +
+    `  <image x="0" y="0" width="${size}" height="${size}" preserveAspectRatio="xMidYMid meet" xlink:href="${dataUrl}" />\n` +
+    `</svg>\n`;
+  downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), buildExportFilename('svg'));
+}
+
 // Expose to inline handlers
 window.toggleAutoRotate = toggleAutoRotate;
 window.updateRotateSpeed = updateRotateSpeed;
@@ -1941,6 +2181,8 @@ window.toggleInvertColormap = toggleInvertColormap;
 window.changeRealm = changeRealm;
 window.changeBackend = changeBackend;
 window.changeResolution = changeResolution;
+window.exportPNG = exportPNG;
+window.exportSVG = exportSVG;
 
 // ─── Render loop ──────────────────────────────────────────────────────────────
 
