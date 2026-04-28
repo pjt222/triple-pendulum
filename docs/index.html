@@ -8,15 +8,24 @@
   <style>
     :root {
       --bg-primary: #0a0a0f;
-      --bg-panel: rgba(12, 12, 20, 0.88);
-      --bg-panel-border: rgba(255, 255, 255, 0.08);
-      --text-primary: #e0e0e8;
-      --text-muted: #888899;
+      --bg-panel: rgba(12, 12, 20, 0.92);
+      --bg-panel-border: rgba(255, 255, 255, 0.12);
+      --bg-input: rgba(255, 255, 255, 0.08);
+      --bg-input-hover: rgba(255, 255, 255, 0.14);
+      --text-primary: #e8e8f0;
+      --text-muted: #b0b0c0;
       --text-accent: #00f0ff;
+      --text-accent-strong: #66f6ff;
+      --color-positive: #66f6ff;
+      --color-negative: #ff7aa8;
       --glow-cyan: 0 0 12px rgba(0, 240, 255, 0.4);
       --font-mono: 'Share Tech Mono', monospace;
       --font-display: 'Orbitron', sans-serif;
-      --transition-speed: 0.3s;
+      --transition-speed: 0.2s;
+      --tt-delay: 350ms;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
     }
 
     * {
@@ -34,8 +43,8 @@
       height: 100vh;
     }
 
-    /* CRT Scanline Overlay */
-    body::after {
+    /* CRT Scanline Overlay (toggleable via .scanlines on body) */
+    body.scanlines::after {
       content: '';
       position: fixed;
       inset: 0;
@@ -48,6 +57,9 @@
         rgba(0, 0, 0, 0.04) 2px,
         rgba(0, 0, 0, 0.04) 4px
       );
+    }
+    @media (prefers-contrast: more) {
+      body.scanlines::after { display: none; }
     }
 
     #canvas-container {
@@ -66,7 +78,7 @@
       position: absolute;
       top: 12px;
       left: 12px;
-      width: 260px;
+      width: 280px;
       max-height: calc(100vh - 24px);
       background: var(--bg-panel);
       border: 1px solid var(--bg-panel-border);
@@ -79,20 +91,38 @@
       z-index: 50;
     }
 
+    @media (max-width: 480px) {
+      #controls {
+        width: calc(100vw - 24px);
+        max-height: calc(100vh - 24px);
+        font-size: 13px;
+      }
+    }
+
     #controls-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 10px 12px;
       background: rgba(255, 255, 255, 0.06);
+      border: none;
       border-bottom: 1px solid var(--bg-panel-border);
       cursor: pointer;
       user-select: none;
       flex-shrink: 0;
+      width: 100%;
+      font-family: inherit;
+      color: inherit;
+      text-align: left;
     }
 
-    #controls-header:hover {
-      background: rgba(255, 255, 255, 0.1);
+    #controls-header:hover,
+    #controls-header:focus-visible {
+      background: rgba(255, 255, 255, 0.12);
+      outline: none;
+    }
+    #controls-header:focus-visible {
+      box-shadow: inset 0 0 0 2px var(--text-accent);
     }
 
     #controls-title {
@@ -108,7 +138,7 @@
     #collapse-icon {
       font-size: 10px;
       color: var(--text-muted);
-      transition: transform 0.2s;
+      transition: transform var(--transition-speed);
     }
 
     #controls.collapsed #collapse-icon {
@@ -117,10 +147,10 @@
 
     #controls-body {
       overflow-y: auto;
-      padding: 10px 12px;
+      padding: 12px 12px 14px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 16px;
     }
 
     #controls.collapsed #controls-body {
@@ -129,30 +159,37 @@
 
     /* Scrollbar */
     #controls-body::-webkit-scrollbar {
-      width: 4px;
+      width: 6px;
     }
     #controls-body::-webkit-scrollbar-track {
       background: transparent;
     }
     #controls-body::-webkit-scrollbar-thumb {
-      background: rgba(0, 240, 255, 0.2);
-      border-radius: 2px;
+      background: rgba(0, 240, 255, 0.25);
+      border-radius: 3px;
+    }
+
+    .section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
     .section-label {
       font-size: 10px;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      margin-bottom: 6px;
+      letter-spacing: 0.1em;
+      color: var(--text-primary);
+      margin: 0 0 2px;
     }
 
     .control-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 6px;
+      gap: 8px;
+      min-height: 24px;
     }
 
     .control-row label {
@@ -163,91 +200,166 @@
 
     .control-row .value-label {
       color: var(--text-muted);
-      min-width: 40px;
+      min-width: 44px;
       text-align: right;
       font-variant-numeric: tabular-nums;
     }
 
+    /* Range slider — touch target 24px high (visual track 4px) */
     input[type="range"] {
       flex: 1;
-      height: 3px;
+      height: 24px;
       appearance: none;
-      background: rgba(255, 255, 255, 0.15);
-      border-radius: 2px;
+      background: transparent;
       outline: none;
       cursor: pointer;
+      padding: 0;
     }
-
+    input[type="range"]::-webkit-slider-runnable-track {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 2px;
+    }
+    input[type="range"]::-moz-range-track {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.18);
+      border-radius: 2px;
+    }
     input[type="range"]::-webkit-slider-thumb {
       appearance: none;
-      width: 12px;
-      height: 12px;
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
       background: var(--text-accent);
       cursor: pointer;
+      margin-top: -7px;
       box-shadow: 0 0 6px rgba(0, 240, 255, 0.5), 0 0 12px rgba(0, 240, 255, 0.2);
     }
-
     input[type="range"]::-moz-range-thumb {
-      width: 12px;
-      height: 12px;
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
       background: var(--text-accent);
       cursor: pointer;
       border: none;
       box-shadow: 0 0 6px rgba(0, 240, 255, 0.5), 0 0 12px rgba(0, 240, 255, 0.2);
     }
+    input[type="range"]:focus-visible::-webkit-slider-thumb {
+      outline: 2px solid var(--text-accent-strong);
+      outline-offset: 2px;
+    }
+    input[type="range"]:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    input[type="range"]:disabled::-webkit-slider-thumb {
+      background: var(--text-muted);
+      box-shadow: none;
+    }
 
+    /* Checkbox — 18×18 visual, larger via .control-row min-height for touch */
     input[type="checkbox"] {
       appearance: none;
-      width: 14px;
-      height: 14px;
-      border: 1px solid rgba(255,255,255,0.3);
+      width: 18px;
+      height: 18px;
+      border: 1px solid rgba(255,255,255,0.4);
       border-radius: 3px;
       background: transparent;
       cursor: pointer;
       position: relative;
       flex-shrink: 0;
+      transition: border-color var(--transition-speed), background var(--transition-speed);
     }
-
+    input[type="checkbox"]:hover {
+      border-color: var(--text-accent);
+    }
+    input[type="checkbox"]:focus-visible {
+      outline: 2px solid var(--text-accent-strong);
+      outline-offset: 2px;
+    }
     input[type="checkbox"]:checked {
       background: var(--text-accent);
       border-color: var(--text-accent);
       box-shadow: 0 0 4px rgba(0, 240, 255, 0.4);
     }
-
     input[type="checkbox"]:checked::after {
       content: '';
       position: absolute;
-      left: 3px;
+      left: 5px;
       top: 1px;
-      width: 5px;
-      height: 8px;
+      width: 6px;
+      height: 11px;
       border: 2px solid var(--bg-primary);
       border-top: none;
       border-left: none;
       transform: rotate(45deg);
     }
 
+    /* Select — 28px tall hit area */
     select {
-      background: rgba(255, 255, 255, 0.06);
+      background: var(--bg-input);
       color: var(--text-primary);
       border: 1px solid var(--bg-panel-border);
       border-radius: 4px;
-      padding: 4px 8px;
+      padding: 6px 8px;
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: 12px;
       cursor: pointer;
       width: 100%;
-      transition: border-color var(--transition-speed);
+      min-height: 28px;
+      transition: border-color var(--transition-speed), background var(--transition-speed);
     }
-    select:hover { border-color: rgba(0, 240, 255, 0.3); }
-    select:focus { border-color: var(--text-accent); outline: none; box-shadow: 0 0 4px rgba(0, 240, 255, 0.2); }
+    select:hover { border-color: rgba(0, 240, 255, 0.4); background: var(--bg-input-hover); }
+    select:focus-visible { border-color: var(--text-accent); outline: none; box-shadow: 0 0 0 2px rgba(0, 240, 255, 0.3); }
+    select:disabled { opacity: 0.5; cursor: not-allowed; }
     select option { background: #0a0a1a; color: var(--text-primary); }
+    select optgroup { color: var(--text-accent); font-style: normal; font-weight: 700; }
+
+    /* Buttons — generic .btn covers all action buttons */
+    .btn {
+      flex: 1;
+      background: var(--bg-input);
+      border: 1px solid var(--bg-panel-border);
+      border-radius: 4px;
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 6px 10px;
+      min-height: 28px;
+      cursor: pointer;
+      transition: border-color var(--transition-speed), color var(--transition-speed), background var(--transition-speed);
+    }
+    .btn:hover {
+      border-color: rgba(0, 240, 255, 0.5);
+      background: var(--bg-input-hover);
+      color: var(--text-accent);
+    }
+    .btn:focus-visible {
+      outline: 2px solid var(--text-accent-strong);
+      outline-offset: 2px;
+    }
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .btn--compact { padding: 4px 8px; font-size: 11px; min-height: 24px; }
+    .btn--toggle[aria-pressed="true"] {
+      background: rgba(0, 240, 255, 0.18);
+      border-color: var(--text-accent);
+      color: var(--text-accent);
+      box-shadow: inset 0 0 0 1px rgba(0, 240, 255, 0.4);
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 6px;
+      align-items: stretch;
+    }
 
     .divider {
       border: none;
       border-top: 1px solid var(--bg-panel-border);
+      margin: 0;
     }
 
     /* Colormap legend */
@@ -256,29 +368,36 @@
     }
     #legend-canvas {
       width: 100%;
-      height: 12px;
+      height: 14px;
       border-radius: 2px;
       display: block;
     }
-    .legend-labels {
+    .legend-ticks {
       display: flex;
       justify-content: space-between;
-      font-size: 9px;
+      font-size: 10px;
       color: var(--text-muted);
-      margin-top: 2px;
+      margin-top: 3px;
+      font-variant-numeric: tabular-nums;
     }
+    .legend-ticks span {
+      flex: 1;
+      text-align: center;
+    }
+    .legend-ticks span:first-child { text-align: left; }
+    .legend-ticks span:last-child { text-align: right; }
 
     /* Slice axis block */
     .slice-axis {
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: 4px;
     }
 
     .slice-axis-header {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
     }
 
     .slice-axis-header label {
@@ -294,16 +413,25 @@
     }
 
     .slice-axis input[type="range"] {
-      margin-left: 20px;
+      margin-left: 26px;
+    }
+
+    /* Time-filter warning */
+    .filter-warning {
+      font-size: 10px;
+      color: var(--color-negative);
+      margin-top: 2px;
+      min-height: 12px;
     }
 
     /* Stats */
     #stats {
-      background: rgba(255, 255, 255, 0.04);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--bg-panel-border);
       border-radius: 4px;
-      padding: 7px 10px;
-      line-height: 1.6;
-      color: var(--text-muted);
+      padding: 8px 10px;
+      line-height: 1.55;
+      color: var(--text-primary);
     }
 
     #stats span {
@@ -311,6 +439,10 @@
       font-weight: 600;
       text-shadow: 0 0 6px rgba(0, 240, 255, 0.3);
     }
+
+    /* Octant button labels: + cyan, - magenta */
+    .octant-sign-pos { color: var(--color-positive); font-weight: 700; }
+    .octant-sign-neg { color: var(--color-negative); font-weight: 700; }
 
     /* Loading overlay */
     #loading {
@@ -366,57 +498,39 @@
       z-index: 50;
     }
 
-    /* Octant buttons */
-    .octant-btn {
-      flex: 1;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid var(--bg-panel-border);
+    /* Floating tooltip portal (positioned via JS, lives on body) */
+    #tooltip-portal {
+      position: fixed;
+      pointer-events: none;
+      padding: 6px 9px;
+      background: rgba(10, 10, 20, 0.97);
+      border: 1px solid rgba(0, 240, 255, 0.45);
       border-radius: 4px;
       color: var(--text-primary);
       font-family: var(--font-mono);
       font-size: 11px;
-      padding: 4px 0;
-      cursor: pointer;
-      transition: all var(--transition-speed);
+      line-height: 1.35;
+      max-width: 240px;
+      white-space: normal;
+      opacity: 0;
+      transition: opacity 0.18s ease;
+      z-index: 9000;
+      box-shadow: 0 0 10px rgba(0, 240, 255, 0.18);
     }
-    .octant-btn:hover {
-      border-color: rgba(0, 240, 255, 0.3);
-      color: var(--text-accent);
+    #tooltip-portal.visible {
+      opacity: 1;
     }
 
-    /* Tooltips */
-    [data-tooltip] {
-      position: relative;
-    }
-    [data-tooltip]::after {
-      content: attr(data-tooltip);
-      position: absolute;
-      left: 50%;
-      top: 100%;
-      transform: translateX(-50%);
-      margin-top: 6px;
-      padding: 5px 8px;
-      background: rgba(10, 10, 20, 0.95);
-      border: 1px solid rgba(0, 240, 255, 0.35);
-      border-radius: 4px;
-      color: var(--text-muted);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      line-height: 1.3;
-      max-width: 220px;
-      white-space: normal;
-      pointer-events: none;
-      opacity: 0;
-      transition: opacity 0.2s;
-      z-index: 200;
-      box-shadow: 0 0 8px rgba(0, 240, 255, 0.15);
-    }
-    [data-tooltip]:hover::after {
-      opacity: 1;
+    /* Visually-hidden utility — accessible to screen readers but not visible */
+    .visually-hidden {
+      position: absolute !important;
+      width: 1px; height: 1px;
+      margin: -1px; padding: 0; border: 0;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
     }
   </style>
 </head>
-<body>
+<body class="scanlines">
 
 <div id="canvas-container"></div>
 
@@ -426,254 +540,209 @@
 </div>
 
 <div id="controls">
-  <div id="controls-header" onclick="togglePanel()">
+  <button type="button" id="controls-header" aria-expanded="true" aria-controls="controls-body">
     <span id="controls-title">Triple Pendulum</span>
-    <span id="collapse-icon">&#9660;</span>
-  </div>
+    <span id="collapse-icon" aria-hidden="true">&#9660;</span>
+  </button>
   <div id="controls-body">
 
     <!-- Stats -->
-    <div id="stats">Loading...</div>
+    <div id="stats" aria-live="polite">Loading...</div>
 
-    <div class="control-row" style="margin-top:8px">
-      <button id="reset-view" onclick="resetView()" style="flex:1;padding:4px 0;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--bg-panel-border);border-radius:4px;cursor:pointer;">Reset view</button>
+    <!-- Action toolbar -->
+    <div class="section">
+      <div class="btn-row">
+        <button type="button" class="btn" id="reset-view" data-tooltip="Reset camera position and zoom">Reset view</button>
+        <button type="button" class="btn" id="reset-filters" data-tooltip="Restore default time, slice, and octant filters">Reset filters</button>
+      </div>
+      <div class="btn-row" data-tooltip="Save current view as a 1:1 square image with embedded settings">
+        <button type="button" class="btn" id="export-png">Save PNG</button>
+        <button type="button" class="btn" id="export-svg">Save SVG</button>
+        <label class="visually-hidden" for="export-size">Output size</label>
+        <select id="export-size" class="btn--compact" style="flex:0 0 auto" data-tooltip="Output dimensions (square pixels)">
+          <option value="1024">1024</option>
+          <option value="2048" selected>2048</option>
+          <option value="4096">4096</option>
+        </select>
+      </div>
     </div>
-
-    <div class="control-row" style="margin-top:6px;gap:4px" data-tooltip="Save current view as a square (1:1) image">
-      <button id="export-png" onclick="exportPNG()" style="flex:1;padding:4px 0;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--bg-panel-border);border-radius:4px;cursor:pointer;">Save PNG</button>
-      <button id="export-svg" onclick="exportSVG()" style="flex:1;padding:4px 0;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--bg-panel-border);border-radius:4px;cursor:pointer;">Save SVG</button>
-      <select id="export-size" style="flex:0 0 auto;padding:3px 4px;font-family:var(--font-mono);font-size:11px;background:rgba(255,255,255,0.06);color:var(--text-muted);border:1px solid var(--bg-panel-border);border-radius:4px;" data-tooltip="Output dimensions (square)">
-        <option value="1024">1024</option>
-        <option value="2048" selected>2048</option>
-        <option value="4096">4096</option>
-      </select>
-    </div>
-
-    <hr class="divider" />
 
     <!-- Dataset -->
-    <div>
+    <div class="section">
       <div class="section-label">Dataset</div>
-      <div class="control-row" style="margin-bottom:7px" data-tooltip="Grid geometry: Cube (uniform Cartesian) or Sphere (Fibonacci spiral shells)">
-        <label>Realm</label>
-        <select id="realm-select" style="flex:1" onchange="changeRealm()">
+      <div class="control-row" data-tooltip="Grid geometry: Cube (uniform Cartesian) or Sphere (Fibonacci spiral shells)">
+        <label for="realm-select">Realm</label>
+        <select id="realm-select" style="flex:1">
           <option value="cube" selected>Cube</option>
           <option value="sphere">Sphere</option>
         </select>
       </div>
-      <div class="control-row" style="margin-bottom:7px" data-tooltip="Simulation engine: GPU (CuPy CUDA, all resolutions) or CPU (Numba, up to 200)">
-        <label>Backend</label>
-        <select id="backend-select" style="flex:1" onchange="changeBackend()">
+      <div class="control-row" data-tooltip="Simulation engine: GPU (CuPy CUDA, all resolutions) or CPU (Numba, up to 200)">
+        <label for="backend-select">Backend</label>
+        <select id="backend-select" style="flex:1">
           <option value="cpu">CPU</option>
           <option value="gpu" selected>GPU</option>
         </select>
       </div>
       <div class="control-row" data-tooltip="Grid points per axis. Higher = more detail and memory">
-        <label>Resolution</label>
-        <select id="resolution-select" style="flex:1" onchange="changeResolution()">
-        </select>
+        <label for="resolution-select">Resolution</label>
+        <select id="resolution-select" style="flex:1"></select>
       </div>
     </div>
 
-    <hr class="divider" />
-
     <!-- Colormap -->
-    <div>
+    <div class="section">
       <div class="section-label">Colormap</div>
-      <div class="control-row" style="gap:4px" data-tooltip="Color mapping for flip-time values. Inv reverses the direction">
-        <select id="colormap-select" style="flex:1" onchange="changeColormap()">
-          <option value="cyberpunk" selected>Cyberpunk</option>
+      <div class="control-row" data-tooltip="Color mapping for flip-time values. Invert reverses the direction">
+        <label class="visually-hidden" for="colormap-select">Colormap</label>
+        <select id="colormap-select" style="flex:1">
+          <option value="cividis" selected>Cividis (CVD-safe)</option>
+          <option value="viridis">Viridis (CVD-safe)</option>
+          <option value="cyberpunk">Cyberpunk</option>
           <option value="magma">Magma</option>
-          <option value="viridis">Viridis</option>
           <option value="inferno">Inferno</option>
           <option value="plasma">Plasma</option>
-          <option value="cividis">Cividis</option>
         </select>
-        <button class="octant-btn" id="invert-btn" style="flex:0 0 auto;padding:4px 8px" onclick="toggleInvertColormap()">Inv</button>
+        <button type="button" class="btn btn--toggle btn--compact" id="invert-btn" style="flex:0 0 auto" aria-pressed="false" aria-label="Invert colormap" data-tooltip="Invert colormap direction">Inv</button>
       </div>
       <div id="colormap-legend">
-        <canvas id="legend-canvas" width="236" height="12"></canvas>
-        <div class="legend-labels">
-          <span>Fast flip</span>
-          <span>Stable</span>
+        <canvas id="legend-canvas" width="256" height="14" aria-label="Colormap gradient"></canvas>
+        <div class="legend-ticks" id="legend-ticks">
+          <span>0 s</span>
+          <span>—</span>
+          <span>tMax</span>
         </div>
       </div>
     </div>
 
-    <hr class="divider" />
-
-    <!-- Point appearance -->
-    <div>
+    <!-- Appearance -->
+    <div class="section">
       <div class="section-label">Appearance</div>
-
-      <div class="control-row" style="margin-bottom:7px" data-tooltip="Rendered point scale (log-scaled for fine control at small sizes)">
-        <label>Point size</label>
-        <input type="range" id="point-size" min="0" max="1" step="0.005" value="0.20" oninput="updatePointSize()" />
+      <div class="control-row" data-tooltip="Rendered point scale (log-scaled for fine control at small sizes)">
+        <label for="point-size">Point size</label>
+        <input type="range" id="point-size" min="0" max="1" step="0.005" value="0.20" />
         <span class="value-label" id="point-size-val">1.0</span>
       </div>
-
       <div class="control-row" data-tooltip="Alpha per point (log-scaled). Low values reveal internal structure via additive blending">
-        <label>Opacity</label>
-        <input type="range" id="opacity" min="0" max="1" step="0.005" value="0.35" oninput="updateOpacity()" />
+        <label for="opacity">Opacity</label>
+        <input type="range" id="opacity" min="0" max="1" step="0.005" value="0.35" />
         <span class="value-label" id="opacity-val">0.050</span>
       </div>
     </div>
 
-    <hr class="divider" />
-
-    <!-- Time filter -->
-    <div>
-      <div class="section-label">Flip time filter</div>
-
-      <div class="control-row" style="margin-bottom:7px" data-tooltip="Hide points that flipped before this time">
-        <label>Min</label>
-        <input type="range" id="time-min" min="0" max="1" step="0.01" value="0" oninput="updateTimeFilter()" />
-        <span class="value-label" id="time-min-val">0.0 s</span>
+    <!-- Display -->
+    <div class="section">
+      <div class="section-label">Display</div>
+      <div class="control-row" data-tooltip="Toggle the X/Y/Z axis indicator lines">
+        <label for="show-axes">Show axes</label>
+        <input type="checkbox" id="show-axes" checked />
       </div>
-
-      <div class="control-row" data-tooltip="Hide points that flipped after this time">
-        <label>Max</label>
-        <input type="range" id="time-max" min="0" max="1" step="0.01" value="1" oninput="updateTimeFilter()" />
-        <span class="value-label" id="time-max-val">-- s</span>
+      <div class="control-row" data-tooltip="Show wireframe grid outline (cube or sphere boundary)">
+        <label for="show-grid">Show grid</label>
+        <input type="checkbox" id="show-grid" />
       </div>
-
-      <div class="control-row" style="margin-top:7px" data-tooltip="Show pendulums that never flipped within simulation time">
-        <label>Show stable</label>
-        <input type="checkbox" id="show-stable" onchange="applyFilters()" />
+      <div class="control-row" data-tooltip="Continuously rotate the camera around the center">
+        <label for="auto-rotate">Auto-rotate</label>
+        <input type="checkbox" id="auto-rotate" />
       </div>
-      <div class="control-row" style="margin-top:4px" data-tooltip="Toggle the X/Y/Z axis indicator lines">
-        <label>Show axes</label>
-        <input type="checkbox" id="show-axes" checked onchange="toggleAxes()" />
-      </div>
-      <div class="control-row" style="margin-top:4px" data-tooltip="Show wireframe grid outline (cube or sphere boundary)">
-        <label>Show grid</label>
-        <input type="checkbox" id="show-grid" onchange="toggleGrid()" />
-      </div>
-      <div class="control-row" style="margin-top:4px" data-tooltip="Continuously rotate the camera around the center">
-        <label>Auto-rotate</label>
-        <input type="checkbox" id="auto-rotate" onchange="toggleAutoRotate()" />
-      </div>
-      <div class="control-row" style="margin-top:4px" data-tooltip="Speed of automatic camera rotation">
-        <label>Rot. speed</label>
-        <input type="range" id="rotate-speed" min="0.1" max="5" step="0.1" value="1" oninput="updateRotateSpeed()" />
+      <div class="control-row" data-tooltip="Speed of automatic camera rotation (only active when auto-rotate is on)">
+        <label for="rotate-speed">Rot. speed</label>
+        <input type="range" id="rotate-speed" min="0.1" max="5" step="0.1" value="1" disabled />
         <span class="value-label" id="rotate-speed-val">1.0</span>
+      </div>
+      <div class="control-row" data-tooltip="Toggle CRT scanline overlay effect">
+        <label for="scanlines-toggle">Scanlines</label>
+        <input type="checkbox" id="scanlines-toggle" checked />
       </div>
     </div>
 
-    <hr class="divider" />
+    <!-- Flip time filter -->
+    <div class="section">
+      <div class="section-label">Flip time filter</div>
+      <div class="control-row" data-tooltip="Hide points that flipped before this time">
+        <label for="time-min">Min</label>
+        <input type="range" id="time-min" min="0" max="1" step="0.01" value="0" />
+        <span class="value-label" id="time-min-val">0.0 s</span>
+      </div>
+      <div class="control-row" data-tooltip="Hide points that flipped after this time">
+        <label for="time-max">Max</label>
+        <input type="range" id="time-max" min="0" max="1" step="0.01" value="1" />
+        <span class="value-label" id="time-max-val">-- s</span>
+      </div>
+      <div class="filter-warning" id="time-warning" role="status" aria-live="polite"></div>
+      <div class="control-row" data-tooltip="Show pendulums that never flipped within simulation time">
+        <label for="show-stable">Show stable</label>
+        <input type="checkbox" id="show-stable" />
+      </div>
+    </div>
 
     <!-- Slice controls (cube realm) -->
-    <div id="cube-slice-controls">
-      <div>
-        <div class="section-label">Slice controls</div>
-
-        <div class="control-row" style="margin-bottom:4px" data-tooltip="Half-width of the slice slab in degrees. At 170 the full cube is visible">
-          <label>Thickness</label>
-          <input type="range" id="slice-thickness" min="1" max="170" step="1" value="5" oninput="updateSliceThickness()" />
-          <span class="value-label" id="slice-thickness-val">5&deg;</span>
-        </div>
+    <div class="section" id="cube-slice-controls">
+      <div class="section-label">Slice controls</div>
+      <div class="control-row" data-tooltip="Half-width of the slice slab in degrees. At 170 the full cube is visible">
+        <label for="slice-thickness">Thickness</label>
+        <input type="range" id="slice-thickness" min="1" max="170" step="1" value="5" />
+        <span class="value-label" id="slice-thickness-val">5&deg;</span>
       </div>
-
-      <!-- Axis slices -->
       <div class="slice-axis">
         <div class="slice-axis-header" data-tooltip="Fix first pendulum angle to see a 2D cross-section">
-          <input type="checkbox" id="slice-x-en" onchange="applyFilters()" />
-          <label>&#952;&#8321; slice</label>
+          <input type="checkbox" id="slice-x-en" />
+          <label for="slice-x-en">&#952;&#8321; slice</label>
           <span class="value-label" id="slice-x-val">0&deg;</span>
         </div>
-        <input type="range" id="slice-x" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('x')" />
+        <input type="range" id="slice-x" min="-170" max="170" step="1" value="0" aria-label="Theta 1 slice angle" />
       </div>
-
       <div class="slice-axis">
         <div class="slice-axis-header" data-tooltip="Fix second pendulum angle to see a 2D cross-section">
-          <input type="checkbox" id="slice-y-en" onchange="applyFilters()" />
-          <label>&#952;&#8322; slice</label>
+          <input type="checkbox" id="slice-y-en" />
+          <label for="slice-y-en">&#952;&#8322; slice</label>
           <span class="value-label" id="slice-y-val">0&deg;</span>
         </div>
-        <input type="range" id="slice-y" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('y')" />
+        <input type="range" id="slice-y" min="-170" max="170" step="1" value="0" aria-label="Theta 2 slice angle" />
       </div>
-
       <div class="slice-axis">
         <div class="slice-axis-header" data-tooltip="Fix third pendulum angle to see a 2D cross-section">
-          <input type="checkbox" id="slice-z-en" onchange="applyFilters()" />
-          <label>&#952;&#8323; slice</label>
+          <input type="checkbox" id="slice-z-en" />
+          <label for="slice-z-en">&#952;&#8323; slice</label>
           <span class="value-label" id="slice-z-val">0&deg;</span>
         </div>
-        <input type="range" id="slice-z" min="-170" max="170" step="1" value="0" oninput="updateSliceLabel('z')" />
+        <input type="range" id="slice-z" min="-170" max="170" step="1" value="0" aria-label="Theta 3 slice angle" />
       </div>
     </div>
 
     <!-- Shell slice controls (sphere realm) -->
-    <div id="sphere-slice-controls" style="display:none">
+    <div class="section" id="sphere-slice-controls" style="display:none">
       <div class="section-label">Shell slice</div>
-
       <div class="slice-axis">
         <div class="slice-axis-header" data-tooltip="Enable radial shell filter for sphere realm">
-          <input type="checkbox" id="shell-slice-en" onchange="applyFilters()" />
-          <label>r shell</label>
+          <input type="checkbox" id="shell-slice-en" />
+          <label for="shell-slice-en">r shell</label>
           <span class="value-label" id="shell-radius-val">85&deg;</span>
         </div>
-        <input type="range" id="shell-radius" min="0" max="170" step="1" value="85" oninput="updateShellLabel()" />
+        <input type="range" id="shell-radius" min="0" max="170" step="1" value="85" aria-label="Shell radius" />
       </div>
-
-      <div class="control-row" style="margin-top:4px" data-tooltip="Half-width of the shell band. At 170 the full sphere is visible">
-        <label>Thickness</label>
-        <input type="range" id="shell-thickness" min="1" max="170" step="1" value="10" oninput="updateShellThicknessLabel()" />
+      <div class="control-row" data-tooltip="Half-width of the shell band. At 170 the full sphere is visible">
+        <label for="shell-thickness">Thickness</label>
+        <input type="range" id="shell-thickness" min="1" max="170" step="1" value="10" />
         <span class="value-label" id="shell-thickness-val">10&deg;</span>
       </div>
     </div>
 
-    <hr class="divider" />
-
     <!-- Octant controls -->
-    <div>
-      <div class="section-label" data-tooltip="Toggle visibility of each sign-combination octant">Octant controls</div>
-
-      <div class="control-row" style="margin-bottom:8px;gap:4px">
-        <button class="octant-btn" onclick="showAllOctants()">Show All</button>
-        <button class="octant-btn" onclick="hideAllOctants()">Hide All</button>
+    <div class="section">
+      <div class="section-label" data-tooltip="Sign-combination octants of (sign θ₁, sign θ₂, sign θ₃)">Octant controls</div>
+      <div class="btn-row">
+        <button type="button" class="btn btn--compact" id="octants-show-all">Show all</button>
+        <button type="button" class="btn btn--compact" id="octants-hide-all">Hide all</button>
       </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 8px">
-        <div class="control-row">
-          <input type="checkbox" id="octant-1" checked onchange="applyFilters()" />
-          <label style="font-size:11px">1 +++</label>
-        </div>
-        <div class="control-row">
-          <input type="checkbox" id="octant-2" checked onchange="applyFilters()" />
-          <label style="font-size:11px">2 ++-</label>
-        </div>
-        <div class="control-row">
-          <input type="checkbox" id="octant-3" checked onchange="applyFilters()" />
-          <label style="font-size:11px">3 +-+</label>
-        </div>
-        <div class="control-row">
-          <input type="checkbox" id="octant-4" checked onchange="applyFilters()" />
-          <label style="font-size:11px">4 +--</label>
-        </div>
-        <div class="control-row">
-          <input type="checkbox" id="octant-5" checked onchange="applyFilters()" />
-          <label style="font-size:11px">5 -++</label>
-        </div>
-        <div class="control-row">
-          <input type="checkbox" id="octant-6" checked onchange="applyFilters()" />
-          <label style="font-size:11px">6 -+-</label>
-        </div>
-        <div class="control-row">
-          <input type="checkbox" id="octant-7" checked onchange="applyFilters()" />
-          <label style="font-size:11px">7 --+</label>
-        </div>
-        <div class="control-row">
-          <input type="checkbox" id="octant-8" checked onchange="applyFilters()" />
-          <label style="font-size:11px">8 ---</label>
-        </div>
-      </div>
+      <div id="octant-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px"></div>
     </div>
 
   </div><!-- end controls-body -->
 </div><!-- end controls -->
 
 <div id="demo-badge">DEMO MODE — random data</div>
+<div id="tooltip-portal" role="tooltip"></div>
 
 <script type="importmap">
 {
@@ -696,7 +765,7 @@ const state = {
   flipTimes: null,       // Float32Array, length totalPoints, NaN = never flipped
   tMax: 0,
   pointCount: 0,
-  currentColormap: 'cyberpunk',
+  currentColormap: 'cividis',
   invertColormap: false,
   // Realm
   realm: 'cube',         // 'cube' or 'sphere'
@@ -923,10 +992,20 @@ function drawLegend() {
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
   for (let x = 0; x < width; x++) {
-    const t = x / (width - 1);
+    const tNorm = x / (width - 1);
+    const t = state.invertColormap ? 1 - tNorm : tNorm;
     const rgb = sampleColormap(t, state.currentColormap);
     ctx.fillStyle = `rgb(${Math.round(rgb[0]*255)},${Math.round(rgb[1]*255)},${Math.round(rgb[2]*255)})`;
     ctx.fillRect(x, 0, 1, height);
+  }
+  // Update numeric ticks (0, mid, tMax)
+  const ticks = document.getElementById('legend-ticks');
+  if (ticks) {
+    const tMax = state.tMax;
+    const fmt = (v) => tMax > 0 ? v.toFixed(1) + ' s' : '—';
+    ticks.children[0].textContent = tMax > 0 ? '0.0 s' : 'fast';
+    ticks.children[1].textContent = tMax > 0 ? fmt(tMax / 2) : 'mid';
+    ticks.children[2].textContent = tMax > 0 ? fmt(tMax) + ' / stable' : 'stable';
   }
 }
 
@@ -1028,13 +1107,31 @@ function populateResolutionSelect(realm, backend, defaultResolution) {
   const select = document.getElementById('resolution-select');
   const entries = getDatasetEntries(realm, backend);
   select.innerHTML = '';
-  let defaultIdx = 0;
-  for (let i = 0; i < entries.length; i++) {
+  // Order entries low → high resolution for grouping
+  const ordered = entries
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => a.e.resolution - b.e.resolution);
+  const groups = [
+    { label: 'Coarse (≤ 100)', max: 100 },
+    { label: 'Medium (125–200)', max: 200 },
+    { label: 'Fine (300+)', max: Infinity },
+  ];
+  const groupEls = groups.map(g => {
+    const og = document.createElement('optgroup');
+    og.label = g.label;
+    return og;
+  });
+  let defaultIdx = ordered.length ? ordered[ordered.length - 1].i : 0;
+  for (const { e, i } of ordered) {
     const option = document.createElement('option');
     option.value = i;
-    option.textContent = entries[i].label;
-    select.appendChild(option);
-    if (defaultResolution && entries[i].resolution === defaultResolution) defaultIdx = i;
+    option.textContent = e.label;
+    const groupIdx = groups.findIndex(g => e.resolution <= g.max);
+    groupEls[groupIdx].appendChild(option);
+    if (defaultResolution && e.resolution === defaultResolution) defaultIdx = i;
+  }
+  for (const og of groupEls) {
+    if (og.children.length > 0) select.appendChild(og);
   }
   select.value = defaultIdx;
 }
@@ -1734,6 +1831,9 @@ function changeRealm() {
   document.getElementById('cube-slice-controls').style.display = realm === 'cube' ? '' : 'none';
   document.getElementById('sphere-slice-controls').style.display = realm === 'sphere' ? '' : 'none';
 
+  // Filter state from the previous realm rarely makes sense here — reset.
+  resetFilters();
+
   const backend = backendSelect.value;
   const currentResolution = getSelectedEntry()?.resolution;
   populateResolutionSelect(realm, backend, currentResolution);
@@ -1757,6 +1857,7 @@ function changeResolution() {
 function changeColormap() {
   const mapName = document.getElementById('colormap-select').value;
   state.currentColormap = mapName;
+  try { localStorage.setItem('tp-colormap', mapName); } catch {}
   if (state.points) {
     const newTexture = generateColormapTexture(mapName);
     const oldTexture = state.points.material.uniforms.colormapTexture.value;
@@ -1770,8 +1871,7 @@ function changeColormap() {
 function toggleInvertColormap() {
   state.invertColormap = !state.invertColormap;
   const btn = document.getElementById('invert-btn');
-  btn.style.borderColor = state.invertColormap ? 'var(--text-accent)' : '';
-  btn.style.color = state.invertColormap ? 'var(--text-accent)' : '';
+  btn.setAttribute('aria-pressed', state.invertColormap ? 'true' : 'false');
   if (state.points) {
     state.points.material.uniforms.invertColormap.value = state.invertColormap ? 1.0 : 0.0;
   }
@@ -1812,13 +1912,28 @@ function updateOpacity() {
   state.needsRender = true;
 }
 
-function updateTimeFilter() {
-  let minVal = parseFloat(document.getElementById('time-min').value);
-  let maxVal = parseFloat(document.getElementById('time-max').value);
+function updateTimeFilter(source) {
+  const minEl = document.getElementById('time-min');
+  const maxEl = document.getElementById('time-max');
+  let minVal = parseFloat(minEl.value);
+  let maxVal = parseFloat(maxEl.value);
 
+  // Two-way clamp so min and max can never cross.
   if (minVal > maxVal) {
-    minVal = maxVal;
-    document.getElementById('time-min').value = minVal;
+    if (source === 'max') {
+      minVal = maxVal;
+      minEl.value = minVal;
+    } else {
+      maxVal = minVal;
+      maxEl.value = maxVal;
+    }
+  }
+
+  const warn = document.getElementById('time-warning');
+  if (warn) {
+    warn.textContent = (Math.abs(maxVal - minVal) < 0.001)
+      ? 'Range is empty — no points pass this filter'
+      : '';
   }
 
   const minSec = (minVal * state.tMax).toFixed(1);
@@ -1842,7 +1957,10 @@ function updateSliceLabel(axis) {
 }
 
 function togglePanel() {
-  document.getElementById('controls').classList.toggle('collapsed');
+  const panel = document.getElementById('controls');
+  const collapsed = panel.classList.toggle('collapsed');
+  document.getElementById('controls-header').setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  try { localStorage.setItem('tp-panel-collapsed', collapsed ? '1' : '0'); } catch {}
 }
 
 function showAllOctants() {
@@ -1860,8 +1978,10 @@ function hideAllOctants() {
 }
 
 function toggleAutoRotate() {
-  state.controls.autoRotate = document.getElementById('auto-rotate').checked;
+  const checked = document.getElementById('auto-rotate').checked;
+  state.controls.autoRotate = checked;
   state.controls.autoRotateSpeed = parseFloat(document.getElementById('rotate-speed').value);
+  document.getElementById('rotate-speed').disabled = !checked;
   state.needsRender = true;
 }
 
@@ -2159,30 +2279,244 @@ function exportSVG() {
   downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), buildExportFilename('svg'));
 }
 
-// Expose to inline handlers
-window.toggleAutoRotate = toggleAutoRotate;
-window.updateRotateSpeed = updateRotateSpeed;
-window.toggleAxes = toggleAxes;
-window.toggleGrid = toggleGrid;
-window.resetView = resetView;
-window.updatePointSize = updatePointSize;
-window.updateOpacity = updateOpacity;
-window.updateTimeFilter = updateTimeFilter;
-window.updateSliceThickness = updateSliceThickness;
-window.updateSliceLabel = updateSliceLabel;
-window.updateShellLabel = updateShellLabel;
-window.updateShellThicknessLabel = updateShellThicknessLabel;
-window.applyFilters = applyFilters;
-window.togglePanel = togglePanel;
-window.showAllOctants = showAllOctants;
-window.hideAllOctants = hideAllOctants;
-window.changeColormap = changeColormap;
-window.toggleInvertColormap = toggleInvertColormap;
-window.changeRealm = changeRealm;
-window.changeBackend = changeBackend;
-window.changeResolution = changeResolution;
-window.exportPNG = exportPNG;
-window.exportSVG = exportSVG;
+// ─── Octant grid + reset filters ─────────────────────────────────────────────
+
+const OCTANT_DEFINITIONS = [
+  { id: 1, signs: '+++' },
+  { id: 2, signs: '++-' },
+  { id: 3, signs: '+-+' },
+  { id: 4, signs: '+--' },
+  { id: 5, signs: '-++' },
+  { id: 6, signs: '-+-' },
+  { id: 7, signs: '--+' },
+  { id: 8, signs: '---' },
+];
+
+function buildOctantGrid() {
+  const grid = document.getElementById('octant-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  for (const o of OCTANT_DEFINITIONS) {
+    const row = document.createElement('div');
+    row.className = 'control-row';
+    row.setAttribute('data-tooltip',
+      `Octant ${o.id}: sign(θ₁)=${o.signs[0]}, sign(θ₂)=${o.signs[1]}, sign(θ₃)=${o.signs[2]}`);
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.id = 'octant-' + o.id;
+    cb.checked = true;
+    cb.addEventListener('change', applyFilters);
+    const lab = document.createElement('label');
+    lab.setAttribute('for', cb.id);
+    const signSpan = (s) =>
+      `<span class="${s === '+' ? 'octant-sign-pos' : 'octant-sign-neg'}">${s}</span>`;
+    lab.innerHTML = `${o.id} ${signSpan(o.signs[0])}${signSpan(o.signs[1])}${signSpan(o.signs[2])}`;
+    row.appendChild(cb);
+    row.appendChild(lab);
+    grid.appendChild(row);
+  }
+}
+
+function setAllOctants(checked) {
+  for (let i = 1; i <= 8; i++) {
+    const cb = document.getElementById('octant-' + i);
+    if (cb) cb.checked = checked;
+  }
+  applyFilters();
+}
+
+function resetFilters() {
+  // Time
+  const minEl = document.getElementById('time-min');
+  const maxEl = document.getElementById('time-max');
+  if (minEl) minEl.value = 0;
+  if (maxEl) maxEl.value = 1;
+  document.getElementById('time-warning').textContent = '';
+  // Show stable
+  document.getElementById('show-stable').checked = false;
+  // Cube slices
+  for (const ax of ['x', 'y', 'z']) {
+    const en = document.getElementById('slice-' + ax + '-en');
+    const sl = document.getElementById('slice-' + ax);
+    if (en) en.checked = false;
+    if (sl) { sl.value = 0; document.getElementById('slice-' + ax + '-val').textContent = '0°'; }
+  }
+  const thick = document.getElementById('slice-thickness');
+  if (thick) { thick.value = 5; document.getElementById('slice-thickness-val').textContent = '5°'; }
+  // Sphere shell
+  const sh = document.getElementById('shell-slice-en');
+  if (sh) sh.checked = false;
+  const sr = document.getElementById('shell-radius');
+  if (sr) { sr.value = 85; document.getElementById('shell-radius-val').textContent = '85°'; }
+  const st = document.getElementById('shell-thickness');
+  if (st) { st.value = 10; document.getElementById('shell-thickness-val').textContent = '10°'; }
+  // Octants
+  setAllOctants(true);
+  updateTimeFilter();
+}
+
+// ─── Tooltip portal ──────────────────────────────────────────────────────────
+// Floating tooltip on body so clipping containers don't hide it.
+
+let tooltipShowTimer = null;
+let tooltipCurrentTarget = null;
+
+function placeTooltip(target, portal) {
+  const rect = target.getBoundingClientRect();
+  const portalRect = portal.getBoundingClientRect();
+  let left = rect.left + (rect.width - portalRect.width) / 2;
+  let top = rect.bottom + 6;
+  // Clamp horizontally
+  const margin = 8;
+  if (left < margin) left = margin;
+  if (left + portalRect.width > window.innerWidth - margin) {
+    left = window.innerWidth - portalRect.width - margin;
+  }
+  // Flip vertically if would overflow bottom
+  if (top + portalRect.height > window.innerHeight - margin) {
+    top = rect.top - portalRect.height - 6;
+  }
+  portal.style.left = left + 'px';
+  portal.style.top = top + 'px';
+}
+
+function setupTooltipPortal() {
+  const portal = document.getElementById('tooltip-portal');
+  if (!portal) return;
+
+  const hide = () => {
+    clearTimeout(tooltipShowTimer);
+    tooltipShowTimer = null;
+    tooltipCurrentTarget = null;
+    portal.classList.remove('visible');
+  };
+
+  document.addEventListener('mouseover', (e) => {
+    const target = e.target.closest('[data-tooltip]');
+    if (!target || target === tooltipCurrentTarget) return;
+    tooltipCurrentTarget = target;
+    clearTimeout(tooltipShowTimer);
+    tooltipShowTimer = setTimeout(() => {
+      portal.textContent = target.getAttribute('data-tooltip');
+      portal.classList.add('visible');
+      placeTooltip(target, portal);
+    }, 350);
+  });
+
+  document.addEventListener('mouseout', (e) => {
+    if (!tooltipCurrentTarget) return;
+    const related = e.relatedTarget;
+    if (related && tooltipCurrentTarget.contains(related)) return;
+    if (related && related.closest && related.closest('[data-tooltip]') === tooltipCurrentTarget) return;
+    hide();
+  });
+
+  // Hide on scroll, focus change, escape
+  document.addEventListener('scroll', hide, true);
+  window.addEventListener('blur', hide);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
+
+  // Show on keyboard focus too (a11y win)
+  document.addEventListener('focusin', (e) => {
+    const target = e.target.closest('[data-tooltip]');
+    if (!target) return;
+    tooltipCurrentTarget = target;
+    portal.textContent = target.getAttribute('data-tooltip');
+    portal.classList.add('visible');
+    placeTooltip(target, portal);
+  });
+  document.addEventListener('focusout', hide);
+}
+
+// ─── Persistence + scanline toggle ───────────────────────────────────────────
+
+function applyScanlines(enabled) {
+  document.body.classList.toggle('scanlines', enabled);
+  const cb = document.getElementById('scanlines-toggle');
+  if (cb) cb.checked = enabled;
+  try { localStorage.setItem('tp-scanlines', enabled ? '1' : '0'); } catch {}
+}
+
+function loadPersistedPrefs() {
+  try {
+    const cm = localStorage.getItem('tp-colormap');
+    if (cm) {
+      const select = document.getElementById('colormap-select');
+      if (select && [...select.options].some(o => o.value === cm)) {
+        select.value = cm;
+        state.currentColormap = cm;
+      }
+    }
+    const collapsed = localStorage.getItem('tp-panel-collapsed');
+    if (collapsed === '1') {
+      document.getElementById('controls').classList.add('collapsed');
+      document.getElementById('controls-header').setAttribute('aria-expanded', 'false');
+    }
+    const scan = localStorage.getItem('tp-scanlines');
+    applyScanlines(scan === null ? true : scan === '1');
+  } catch {
+    applyScanlines(true);
+  }
+  // Respect prefers-reduced-motion: default auto-rotate off
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const ar = document.getElementById('auto-rotate');
+    if (ar) ar.checked = false;
+  }
+}
+
+// ─── Wire all DOM events ─────────────────────────────────────────────────────
+
+function wireEvents() {
+  // Header collapse
+  document.getElementById('controls-header').addEventListener('click', togglePanel);
+
+  // Toolbar
+  document.getElementById('reset-view').addEventListener('click', resetView);
+  document.getElementById('reset-filters').addEventListener('click', resetFilters);
+  document.getElementById('export-png').addEventListener('click', exportPNG);
+  document.getElementById('export-svg').addEventListener('click', exportSVG);
+
+  // Dataset
+  document.getElementById('realm-select').addEventListener('change', changeRealm);
+  document.getElementById('backend-select').addEventListener('change', changeBackend);
+  document.getElementById('resolution-select').addEventListener('change', changeResolution);
+
+  // Colormap
+  document.getElementById('colormap-select').addEventListener('change', changeColormap);
+  document.getElementById('invert-btn').addEventListener('click', toggleInvertColormap);
+
+  // Appearance
+  document.getElementById('point-size').addEventListener('input', updatePointSize);
+  document.getElementById('opacity').addEventListener('input', updateOpacity);
+
+  // Display
+  document.getElementById('show-axes').addEventListener('change', toggleAxes);
+  document.getElementById('show-grid').addEventListener('change', toggleGrid);
+  document.getElementById('auto-rotate').addEventListener('change', toggleAutoRotate);
+  document.getElementById('rotate-speed').addEventListener('input', updateRotateSpeed);
+  document.getElementById('scanlines-toggle').addEventListener('change', (e) => applyScanlines(e.target.checked));
+
+  // Time filter — pass source so two-way clamp knows which slider moved
+  document.getElementById('time-min').addEventListener('input', () => updateTimeFilter('min'));
+  document.getElementById('time-max').addEventListener('input', () => updateTimeFilter('max'));
+  document.getElementById('show-stable').addEventListener('change', applyFilters);
+
+  // Cube slices
+  document.getElementById('slice-thickness').addEventListener('input', updateSliceThickness);
+  for (const ax of ['x', 'y', 'z']) {
+    document.getElementById('slice-' + ax + '-en').addEventListener('change', applyFilters);
+    document.getElementById('slice-' + ax).addEventListener('input', () => updateSliceLabel(ax));
+  }
+
+  // Sphere shell
+  document.getElementById('shell-slice-en').addEventListener('change', applyFilters);
+  document.getElementById('shell-radius').addEventListener('input', updateShellLabel);
+  document.getElementById('shell-thickness').addEventListener('input', updateShellThicknessLabel);
+
+  // Octant toolbar (octant checkboxes wired by buildOctantGrid)
+  document.getElementById('octants-show-all').addEventListener('click', () => setAllOctants(true));
+  document.getElementById('octants-hide-all').addEventListener('click', () => setAllOctants(false));
+}
 
 // ─── Render loop ──────────────────────────────────────────────────────────────
 
@@ -2336,8 +2670,18 @@ function applyConfigTimeFilter() {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+  buildOctantGrid();
+  wireEvents();
+  setupTooltipPortal();
+
   await loadConfig();
   applyConfig();
+
+  // Persisted user prefs take priority over config file defaults
+  loadPersistedPrefs();
+
+  // Sync rotate-speed disabled state to initial auto-rotate value
+  document.getElementById('rotate-speed').disabled = !document.getElementById('auto-rotate').checked;
 
   initThree();
   animate();
@@ -2353,6 +2697,7 @@ async function main() {
   applyConfigToMaterial();
   applyConfigTimeFilter();
   applyFilters();
+  drawLegend();  // Re-draw with real tMax for tick labels
 
   // Hide loading screen
   const loading = document.getElementById('loading');

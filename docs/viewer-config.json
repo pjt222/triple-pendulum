@@ -7,7 +7,7 @@
   "rendering": {
     "pointSize": 1,
     "opacity": 0.05,
-    "colormap": "cyberpunk",
+    "colormap": "cividis",
     "invertColormap": false
   },
   "timeFilter": {},
