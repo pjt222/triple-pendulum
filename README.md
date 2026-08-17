@@ -1,6 +1,7 @@
 # Triple Pendulum 3D Chaos Voxel Map
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/pjt222/triple-pendulum)
 **[Live Interactive Viewer](https://huggingface.co/spaces/pjt222/triple-pendulum)** on Hugging Face Spaces
 
 <p align="center">
